@@ -7,8 +7,8 @@ LDFLAGS =
 CORE_SRC = src/pattern_matching.c
 
 # Targets
-TEST_BIN_1 = tests/test_ac
-TEST_BIN_2 = tests/test_ac_file
+TEST_BIN_1 = tests/test_ac.o
+TEST_BIN_2 = tests/test_ac_file.o
 
 .PHONY: all clean test test_basic test_file
 
