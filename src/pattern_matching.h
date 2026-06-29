@@ -6,7 +6,7 @@
 #include <string.h>
 
 #define AC_ALPHABET_SIZE 256   /* one entry per possible byte value */
-#define AC_MAX_STATES    8192  /* max nodes in the trie; increase if you load >1000 patterns */
+#define AC_MAX_STATES   8156  /* max nodes in the trie; */
 
 // Aho-Corasick automaton / Trie implementation
 
@@ -34,12 +34,12 @@ typedef struct {
 
 //ACAutomaton represents the automaton itself, it is in fact composed of ACState(s) defined above.
 typedef struct {
-    ACState  states[AC_MAX_STATES];
-    int      num_states;
-    char   **patterns; //pointer to the original pattern strings (owned by the automaton)
-    int      num_patterns; 
-    int      output_next[AC_MAX_STATES];
-            // parallel array, output_next[i] chains to the next pattern output at the same time
+    ACState *states;      // Heap-allocated array
+    int *output_next;     // chains to the next pattern output at the same time
+    int num_states;       // Current count
+    int capacity;         // Current allocated capacity
+    char **patterns;    //pointer to the original pattern strings (owned by the automaton)
+    int num_patterns; //number of patterns
 } ACAutomaton;
 
 //ACMatch represents a single match, pattern_id is the index of the automaton to the pattern

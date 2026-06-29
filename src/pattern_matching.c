@@ -6,6 +6,8 @@
 #include <assert.h>
 
 /* Internal helpers */
+
+
 // Allocate and initialise one fresh state node.
 static void init_state(ACState *s)
 {
@@ -15,20 +17,38 @@ static void init_state(ACState *s)
     s->output  = -1;
 }
 
+static int ensure_capacity(ACAutomaton *ac)
+{
+    if (ac->num_states < ac->capacity) return 1; // Plenty of space
+
+    int new_capacity = (ac->capacity == 0) ? 1024 : ac->capacity * 2;
+    
+    ACState *new_states = (ACState *)realloc(ac->states, sizeof(ACState) * new_capacity);
+    int *new_output = (int *)realloc(ac->output_next, sizeof(int) * new_capacity);
+
+    if (!new_states || !new_output) return 0; // OOM
+
+    ac->states = new_states;
+    ac->output_next = new_output;
+    ac->capacity = new_capacity;
+
+    // Optional: Initialize the newly allocated states (goto_table to -1)
+    for (int i = ac->num_states; i < ac->capacity; i++) {
+        init_state(&ac->states[i]);
+        ac->output_next[i] = -1;
+    }
+    return 1;
+}
+
+
 //Allocate a new state in the automaton
 // Returns the new state's index or -1 if capacity is exhausted
 static int alloc_state(ACAutomaton *ac)
 {
-    if (ac->num_states >= AC_MAX_STATES) {
-        fprintf(stderr, "[ac] ERROR: AC_MAX_STATES (%d) exceeded. "
-                        "Increase the constant and recompile.\n",
-                AC_MAX_STATES);
-        return -1;
-    }
+    if (!ensure_capacity(ac)) return -1; // Allocation failed
 
     int id = ac->num_states++;
-    init_state(&ac->states[id]);
-    ac->output_next[id] = -1;
+    // init_state is now handled inside ensure_capacity or here
     return id;
 }
 
@@ -161,6 +181,10 @@ ACAutomaton *ac_build(const char **patterns, int num_patterns)
     ACAutomaton *ac = (ACAutomaton *)calloc(1, sizeof(ACAutomaton));
     if (!ac) return NULL;
 
+    // Allocate memory for states and output_next
+    ac->states = (ACState *)malloc(sizeof(ACState) * AC_MAX_STATES);
+    ac->output_next = (int *)malloc(sizeof(int) * AC_MAX_STATES);
+
     /* Copy pattern strings */
     ac->num_patterns = num_patterns;
     ac->patterns = (char **)malloc(num_patterns * sizeof(char *));
@@ -194,8 +218,7 @@ ACAutomaton *ac_build(const char **patterns, int num_patterns)
       on the caller's stack
     - ACMatchList is allocated on the heap but owned entirely by the caller
  
-  Multiple OpenMP threads can call ac_scan() concurrently on the same
-  ACAutomaton* without any locks.
+Multiple OpenMP threads can call ac_scan() concurrently on the same ACAutomaton* without any locks.
  */
 ACMatchList ac_scan(const ACAutomaton *ac, const uint8_t *data, size_t len)
 {
