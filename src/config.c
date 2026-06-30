@@ -18,8 +18,8 @@
 void init_default_config(Config *cfg) {
     memset(cfg, 0, sizeof(Config));
     cfg->dataset_size = 100 * 1024 * 1024; // 100 MB default
-    cfg->packet_count = 100000;            // 100k packets default
-    strncpy(cfg->pattern_file, "patterns.txt", sizeof(cfg->pattern_file) - 1);
+    cfg->packet_count = 1000000;            // 1kk packets default
+    strncpy(cfg->pattern_file, "datasets/patterns.txt", sizeof(cfg->pattern_file) - 1);
     cfg->num_patterns = 0;
     cfg->num_mpi_ranks = 1;
     cfg->num_omp_threads = 4;              // 4 OMP threads default

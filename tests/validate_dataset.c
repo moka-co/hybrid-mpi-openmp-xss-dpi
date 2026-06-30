@@ -3,7 +3,7 @@
 //            tests/validate_dataset.c src/dataset.c src/pattern_matching.c
 // Run: ./tests/validate_dataset
 //
-// Generates 10,000 synthetic packets and checks:
+// Generates NUM_PACKETS synthetic packets and checks:
 //   1. Length distribution looks lognormal (mean, min/max, histogram)
 //   2. ~5% of packets are flagged has_xss
 //   3. The Aho-Corasick automaton's detections agree with the ground-truth

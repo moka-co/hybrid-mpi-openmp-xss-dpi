@@ -1,21 +1,27 @@
 # Top-level Makefile
-CC = gcc
-CFLAGS = -Wall -O3 -Isrc/
-LDFLAGS = -lm
+CC = mpicc
+CFLAGS = -Wall -O3 -fopenmp -Isrc/ -DHAVE_MPI
+LDFLAGS = -fopenmp -lm
 
 # Source files
 CORE_SRC = src/pattern_matching.c src/dataset.c src/config.c
+MAIN_SRC = src/dpi_engine.c
 
 # Targets
+MAIN_BIN     = dpi_engine
 TEST_BIN_1   = tests/test_ac.o
 TEST_BIN_2   = tests/test_ac_file.o
 TEST_CONFIG  = tests/test_config.o
 BENCH_BIN    = tests/benchmarks/benchmark_ac.o
 VALIDATE_BIN = tests/validate_dataset.o
 
-.PHONY: all clean test test_basic test_file test_config benchmark validate
+.PHONY: all clean test test_basic test_file test_config benchmark validate run
 
-all: $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(VALIDATE_BIN)
+all: $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(VALIDATE_BIN)
+
+# Build the main DPI hybrid engine
+$(MAIN_BIN): $(MAIN_SRC) $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Build the basic unit test
 $(TEST_BIN_1): tests/test_ac.c $(CORE_SRC)
@@ -36,6 +42,11 @@ $(BENCH_BIN): tests/benchmarks/benchmark_ac.c $(CORE_SRC)
 # Build the dataset validation program
 $(VALIDATE_BIN): tests/validate_dataset.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Run the engine using the generated dataset layout
+run: $(MAIN_BIN)
+	@echo "Launching DPI engine across hybrid MPI cluster layout..."
+	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 4 --schedule dynamic,16 --pattern-file datasets-private/patterns.txt
 
 # Run specific tests or all of them
 test: test_basic test_file test_config
@@ -61,5 +72,5 @@ validate: $(VALIDATE_BIN)
 	./$(VALIDATE_BIN)
 
 clean:
-	rm -f $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(VALIDATE_BIN)
-	rm -f *.o src/*.o tests/*.o
+	rm -f $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(VALIDATE_BIN)
+	rm -f *.o src/*.o tests/*.o tests/benchmarks/*.o

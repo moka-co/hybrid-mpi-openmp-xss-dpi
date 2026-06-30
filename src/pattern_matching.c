@@ -7,7 +7,6 @@
 
 /* Internal helpers */
 
-
 // Allocate and initialise one fresh state node.
 static void init_state(ACState *s)
 {
