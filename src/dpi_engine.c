@@ -72,7 +72,7 @@ void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Pa
 
     while (fread(&p_size, sizeof(uint32_t), 1, f) == 1) {
         if (current_idx >= start_idx && populated < count) {
-            (*packets)[populated].len = p_size; 
+            (*packets)[populated].len = p_size;
             (*packets)[populated].data = malloc(p_size);
             size_t read_bytes = fread((*packets)[populated].data, 1, p_size, f);
             (void)read_bytes; // Suppress unused result warning
@@ -109,23 +109,27 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
         print_config(&config);
-        
+
         capture_metadata(&metadata);
         printf("\n=== Metadata Environment Verification ===\n");
-        printf("Host: %s | GCC: %s | MPI: %s | Kernel: %s\n\n", 
+        printf("Host: %s | GCC: %s | MPI: %s | Kernel: %s\n\n",
                metadata.hostname, metadata.gcc_version, metadata.mpi_version, metadata.sys_info);
     }
 
     // Broadcast valid configurations to all worker ranks
     MPI_Bcast(&config, sizeof(Config), MPI_BYTE, 0, MPI_COMM_WORLD);
 
-    // Apply Dynamic OpenMP runtime scheduling configuration adjustments
+    // Version B's schedule (dynamic/guided) is selected at runtime via config.
+    // Version A always uses a hardcoded `schedule(static)` clause below, so it
+    // does NOT depend on this omp_set_schedule() call.
     #ifdef _OPENMP
-    omp_sched_t selected_sched = omp_sched_static;
-    if (strcmp(config.schedule_type, "dynamic") == 0) {
-        selected_sched = omp_sched_dynamic;
-    } else if (strcmp(config.schedule_type, "guided") == 0) {
+    omp_sched_t selected_sched = omp_sched_dynamic;
+    if (strcmp(config.schedule_type, "guided") == 0) {
         selected_sched = omp_sched_guided;
+    } else if (strcmp(config.schedule_type, "static") == 0) {
+        // Allow B to degrade to static via config for sanity-check runs,
+        // but the dedicated Version A path below is the canonical static baseline.
+        selected_sched = omp_sched_static;
     }
     omp_set_schedule(selected_sched, (int)config.schedule_chunk);
     #endif
@@ -159,7 +163,8 @@ int main(int argc, char *argv[]) {
     config.packet_count = global_packet_total;
 
     // ==========================================
-    // PATH 1: Pure Sequential Execution (Local Shard)
+    // PATH 1: Pure Sequential Execution (Local Shard, no OpenMP)
+    // Establishes the single-threaded baseline (Phase 1 reference).
     // ==========================================
     long seq_matches = 0;
     long seq_bytes_scanned = 0;
@@ -178,71 +183,121 @@ int main(int argc, char *argv[]) {
     double seq_local_elapsed = seq_end_time - seq_start_time;
 
     // ==========================================
-    // PATH 2: Parallel OpenMP Execution (Configured Schedule)
+    // PATH 2: VERSION A — Naive OpenMP, hardcoded static schedule
+    // 4.2 deliverable: fixed-chunk static partitioning, no config dependency.
     // ==========================================
-    long parallel_matches = 0;
-    long parallel_bytes_scanned = 0;
+    long a_matches = 0;
+    long a_bytes_scanned = 0;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    double parallel_start_time = MPI_Wtime();
+    double a_start_time = MPI_Wtime();
+
+    #pragma omp parallel for \
+        schedule(static) \
+        num_threads(config.num_omp_threads) \
+        reduction(+:a_matches, a_bytes_scanned)
+    for (uint32_t i = 0; i < num_packets_local; i++) {
+        ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
+        a_matches += ml.count;
+        a_bytes_scanned += local_packets[i].len;
+        ac_free_matches(&ml);
+    }
+
+    double a_end_time = MPI_Wtime();
+    double a_local_elapsed = a_end_time - a_start_time;
+
+    // ==========================================
+    // PATH 3: VERSION B — Optimized OpenMP, dynamic/guided schedule
+    // 4.3 deliverable: schedule(runtime) so behavior is driven entirely by
+    // config.schedule_type / config.schedule_chunk (set via omp_set_schedule above).
+    // Everything else is identical to Version A by design.
+    // ==========================================
+    long b_matches = 0;
+    long b_bytes_scanned = 0;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    double b_start_time = MPI_Wtime();
 
     #pragma omp parallel for \
         schedule(runtime) \
         num_threads(config.num_omp_threads) \
-        reduction(+:parallel_matches, parallel_bytes_scanned)
+        reduction(+:b_matches, b_bytes_scanned)
     for (uint32_t i = 0; i < num_packets_local; i++) {
         ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
-        parallel_matches += ml.count;
-        parallel_bytes_scanned += local_packets[i].len;
+        b_matches += ml.count;
+        b_bytes_scanned += local_packets[i].len;
         ac_free_matches(&ml);
     }
 
-    double parallel_end_time = MPI_Wtime();
-    double parallel_local_elapsed = parallel_end_time - parallel_start_time;
+    double b_end_time = MPI_Wtime();
+    double b_local_elapsed = b_end_time - b_start_time;
 
     // ==========================================
-    // 5. Global Metrics Reduction & Aggregation
+    // 5. Global Metrics Reduction & Aggregation (4.4)
+    // For each version: sum matches, sum bytes, MAX elapsed time across ranks
+    // (the max is the true wall-clock time since ranks run concurrently).
     // ==========================================
-    long global_seq_matches = 0, global_parallel_matches = 0;
-    long global_seq_bytes = 0, global_parallel_bytes = 0;
-    double max_seq_time = 0.0, max_parallel_time = 0.0;
+    long g_seq_matches = 0, g_a_matches = 0, g_b_matches = 0;
+    long g_seq_bytes = 0, g_a_bytes = 0, g_b_bytes = 0;
+    double max_seq_time = 0.0, max_a_time = 0.0, max_b_time = 0.0;
 
-    MPI_Reduce(&seq_matches, &global_seq_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&seq_bytes_scanned, &global_seq_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&seq_matches, &g_seq_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&seq_bytes_scanned, &g_seq_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&seq_local_elapsed, &max_seq_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
-    MPI_Reduce(&parallel_matches, &global_parallel_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&parallel_bytes_scanned, &global_parallel_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&parallel_local_elapsed, &max_parallel_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&a_matches, &g_a_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&a_bytes_scanned, &g_a_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&a_local_elapsed, &max_a_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    MPI_Reduce(&b_matches, &g_b_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&b_bytes_scanned, &g_b_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&b_local_elapsed, &max_b_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     // ==========================================
-    // 6. Comparative Performance Report Output
+    // 6. Comparative Performance Report Output (single root-rank row)
     // ==========================================
     if (rank == 0) {
         printf("=== Performance Evaluation Report ===\n");
         printf("  Total MPI Ranks Active: %d\n", num_ranks);
         printf("  OMP Threads per Rank:   %u\n", config.num_omp_threads);
-        printf("  OMP Schedule Type:      %s (Chunk: %u)\n", config.schedule_type, config.schedule_chunk);
+        printf("  Version B Schedule:     %s (Chunk: %u)\n", config.schedule_type, config.schedule_chunk);
         printf("  Loaded Signatures Count:%u\n", config.num_patterns);
         printf("  Global Packets Scanned: %u\n\n", config.packet_count);
 
-        printf("  [SEQUENTIAL MODE]\n");
+        printf("  [SEQUENTIAL BASELINE]\n");
         printf("    Max Wall Clock Time:  %f seconds\n", max_seq_time);
-        printf("    Total Bytes Scanned:  %ld Bytes\n", global_seq_bytes);
-        printf("    Total Matches Found:  %ld\n", global_seq_matches);
-        printf("    Throughput:           %f MB/s\n\n", 
-               ((double)global_seq_bytes / (1024.0 * 1024.0)) / max_seq_time);
+        printf("    Total Bytes Scanned:  %ld Bytes\n", g_seq_bytes);
+        printf("    Total Matches Found:  %ld\n", g_seq_matches);
+        printf("    Throughput:           %f MB/s\n\n",
+               ((double)g_seq_bytes / (1024.0 * 1024.0)) / max_seq_time);
 
-        printf("  [PARALLEL HYBRID MODE - %s]\n", config.schedule_type);
-        printf("    Max Wall Clock Time:  %f seconds\n", max_parallel_time);
-        printf("    Total Bytes Scanned:  %ld Bytes\n", global_parallel_bytes);
-        printf("    Total Matches Found:  %ld\n", global_parallel_matches);
-        printf("    Throughput:           %f MB/s\n\n", 
-               ((double)global_parallel_bytes / (1024.0 * 1024.0)) / max_parallel_time);
+        printf("  [VERSION A - static schedule]\n");
+        printf("    Max Wall Clock Time:  %f seconds\n", max_a_time);
+        printf("    Total Bytes Scanned:  %ld Bytes\n", g_a_bytes);
+        printf("    Total Matches Found:  %ld\n", g_a_matches);
+        printf("    Throughput:           %f MB/s\n\n",
+               ((double)g_a_bytes / (1024.0 * 1024.0)) / max_a_time);
+
+        printf("  [VERSION B - %s schedule]\n", config.schedule_type);
+        printf("    Max Wall Clock Time:  %f seconds\n", max_b_time);
+        printf("    Total Bytes Scanned:  %ld Bytes\n", g_b_bytes);
+        printf("    Total Matches Found:  %ld\n", g_b_matches);
+        printf("    Throughput:           %f MB/s\n\n",
+               ((double)g_b_bytes / (1024.0 * 1024.0)) / max_b_time);
 
         printf("  [EFFICIENCY METRICS]\n");
-        printf("    Calculated Speedup:   %fx\n", max_seq_time / max_parallel_time);
+        printf("    Speedup A vs Sequential: %fx\n", max_seq_time / max_a_time);
+        printf("    Speedup B vs Sequential: %fx\n", max_seq_time / max_b_time);
+        printf("    Speedup B vs A:          %fx   <-- headline A/B result\n", max_a_time / max_b_time);
         printf("======================================\n");
+
+        // Sanity check: match counts should be identical across all three paths.
+        if (g_seq_matches != g_a_matches || g_seq_matches != g_b_matches) {
+            fprintf(stderr,
+                "WARNING: match-count mismatch across versions (seq=%ld, A=%ld, B=%ld). "
+                "Check for race conditions in scanning or reduction clauses.\n",
+                g_seq_matches, g_a_matches, g_b_matches);
+        }
     }
 
     // Cleanup Local Allocations

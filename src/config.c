@@ -17,7 +17,7 @@
 
 void init_default_config(Config *cfg) {
     memset(cfg, 0, sizeof(Config));
-    cfg->dataset_size = 100 * 1024 * 1024; // 100 MB default
+    cfg->dataset_size = 1024 * 1024 * 1024; // 1GB default
     cfg->packet_count = 1000000;            // 1kk packets default
     strncpy(cfg->pattern_file, "datasets/patterns.txt", sizeof(cfg->pattern_file) - 1);
     cfg->num_patterns = 0;
@@ -36,7 +36,7 @@ void print_usage(const char *prog_name) {
     fprintf(stderr, "Usage: %s [options]\n", prog_name);
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  --dataset-mb <num>   Dataset size in MB (default: 100)\n");
-    fprintf(stderr, "  --num-packets <num>  Total number of packets (default: 100000)\n");
+    fprintf(stderr, "  --num-packets <num>  Total number of packets (default: 1000000)\n");
     fprintf(stderr, "  --pattern-file <str> Path to signature pattern file (default: patterns.txt)\n");
     fprintf(stderr, "  --mpi-ranks <num>    Target MPI ranks (default: 1)\n");
     fprintf(stderr, "  --omp-threads <num>  Number of OpenMP threads (default: 4)\n");
