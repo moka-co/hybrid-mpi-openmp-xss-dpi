@@ -1,0 +1,23 @@
+=== Pattern Matching Baseline Performance Report ===
+
+Configuration:
+  Patterns:              22729
+  Automaton states:      1511087
+  Test packets:          1000000
+  Total data scanned:    4098.97 MB
+  Avg packet size:       4099.0 bytes
+
+Results:
+  Scan time:             26.679097 sec
+  Total matches:         113026901
+  Throughput:            153.64 MB/s
+  Packets/sec:           37483
+  Avg time/packet:       26.679 µs
+  Avg time/byte:         6.51 ns
+
+Bottleneck Notes:
+  - Each state has a lookup table
+  - Total automaton size: ~1522892 KB
+  - Inner loop: single table lookup per byte
+  - If throughput is low, likely L1 cache misses
+  - If throughput is high, tight loop and prefetching work well
