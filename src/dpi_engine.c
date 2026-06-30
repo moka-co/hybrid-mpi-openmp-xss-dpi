@@ -3,9 +3,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h> // For access()
 #include "config.h"
 #include "dataset.h"
 #include "pattern_matching.h"
+
+// 5.1 Define schema in C as a struct
+typedef struct {
+    double exec_time;
+    double throughput_mb_s;
+    double speedup;
+    double efficiency;
+} PerformanceMetrics;
 
 // Helper function to load patterns from a text file cleanly on all ranks
 static int load_patterns_from_file(const char *filename, char ***patterns_out) {
@@ -17,7 +26,6 @@ static int load_patterns_from_file(const char *filename, char ***patterns_out) {
     char line[256];
 
     while (fgets(line, sizeof(line), f)) {
-        // Strip trailing newline characters safely
         line[strcspn(line, "\r\n")] = '\0';
         if (strlen(line) == 0) continue;
 
@@ -48,7 +56,6 @@ void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Pa
         return;
     }
 
-    // 1. Scan the layout to count total packets in the binary file
     uint32_t total_packets = 0;
     uint32_t p_size;
     while (fread(&p_size, sizeof(uint32_t), 1, f) == 1) {
@@ -56,7 +63,6 @@ void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Pa
         total_packets++;
     }
 
-    // 2. Calculate this rank's allocation share bounds
     uint32_t count = total_packets / num_ranks;
     int remainder = total_packets % num_ranks;
     uint32_t start_idx = rank * count + (rank < remainder ? rank : remainder);
@@ -65,7 +71,6 @@ void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Pa
     *local_count = count;
     *packets = malloc(count * sizeof(Packet));
 
-    // 3. Rewind and extract this rank's specific subset of packets
     rewind(f);
     uint32_t current_idx = 0;
     uint32_t populated = 0;
@@ -75,7 +80,7 @@ void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Pa
             (*packets)[populated].len = p_size;
             (*packets)[populated].data = malloc(p_size);
             size_t read_bytes = fread((*packets)[populated].data, 1, p_size, f);
-            (void)read_bytes; // Suppress unused result warning
+            (void)read_bytes;
             populated++;
         } else {
             fseek(f, p_size, SEEK_CUR);
@@ -87,7 +92,6 @@ void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Pa
 }
 
 int main(int argc, char *argv[]) {
-    // 1. Initialize MPI Environment
     int mpi_provided;
     MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &mpi_provided);
 
@@ -98,7 +102,6 @@ int main(int argc, char *argv[]) {
     Config config;
     SystemMetadata metadata;
 
-    // 2. Configuration Parsing & Validation
     init_default_config(&config);
     parse_arguments(argc, argv, &config);
     config.num_mpi_ranks = num_ranks;
@@ -116,25 +119,18 @@ int main(int argc, char *argv[]) {
                metadata.hostname, metadata.gcc_version, metadata.mpi_version, metadata.sys_info);
     }
 
-    // Broadcast valid configurations to all worker ranks
     MPI_Bcast(&config, sizeof(Config), MPI_BYTE, 0, MPI_COMM_WORLD);
 
-    // Version B's schedule (dynamic/guided) is selected at runtime via config.
-    // Version A always uses a hardcoded `schedule(static)` clause below, so it
-    // does NOT depend on this omp_set_schedule() call.
     #ifdef _OPENMP
     omp_sched_t selected_sched = omp_sched_dynamic;
     if (strcmp(config.schedule_type, "guided") == 0) {
         selected_sched = omp_sched_guided;
     } else if (strcmp(config.schedule_type, "static") == 0) {
-        // Allow B to degrade to static via config for sanity-check runs,
-        // but the dedicated Version A path below is the canonical static baseline.
         selected_sched = omp_sched_static;
     }
     omp_set_schedule(selected_sched, (int)config.schedule_chunk);
     #endif
 
-    // 3. Load Pattern Signatures & Build Aho-Corasick Automaton locally on all ranks
     char **patterns = NULL;
     int pattern_count = load_patterns_from_file(config.pattern_file, &patterns);
     if (pattern_count < 0) {
@@ -152,19 +148,16 @@ int main(int argc, char *argv[]) {
 
     config.num_patterns = (uint32_t)pattern_count;
 
-    // 4. Shard Loading from the real generated binary packet file
     Packet *local_packets = NULL;
     uint32_t num_packets_local = 0;
     load_binary_dataset_shard("datasets/packets.bin", rank, num_ranks, &local_packets, &num_packets_local);
 
-    // Sync total parsed packet realities with our configuration counter metric
     uint32_t global_packet_total = 0;
     MPI_Allreduce(&num_packets_local, &global_packet_total, 1, MPI_UINT32_T, MPI_SUM, MPI_COMM_WORLD);
     config.packet_count = global_packet_total;
 
     // ==========================================
-    // PATH 1: Pure Sequential Execution (Local Shard, no OpenMP)
-    // Establishes the single-threaded baseline (Phase 1 reference).
+    // PATH 1: Pure Sequential Baseline
     // ==========================================
     long seq_matches = 0;
     long seq_bytes_scanned = 0;
@@ -183,8 +176,7 @@ int main(int argc, char *argv[]) {
     double seq_local_elapsed = seq_end_time - seq_start_time;
 
     // ==========================================
-    // PATH 2: VERSION A — Naive OpenMP, hardcoded static schedule
-    // 4.2 deliverable: fixed-chunk static partitioning, no config dependency.
+    // PATH 2: VERSION A — Naive Static Schedule
     // ==========================================
     long a_matches = 0;
     long a_bytes_scanned = 0;
@@ -207,10 +199,7 @@ int main(int argc, char *argv[]) {
     double a_local_elapsed = a_end_time - a_start_time;
 
     // ==========================================
-    // PATH 3: VERSION B — Optimized OpenMP, dynamic/guided schedule
-    // 4.3 deliverable: schedule(runtime) so behavior is driven entirely by
-    // config.schedule_type / config.schedule_chunk (set via omp_set_schedule above).
-    // Everything else is identical to Version A by design.
+    // PATH 3: VERSION B — Optimized Dynamic/Guided Schedule
     // ==========================================
     long b_matches = 0;
     long b_bytes_scanned = 0;
@@ -233,9 +222,7 @@ int main(int argc, char *argv[]) {
     double b_local_elapsed = b_end_time - b_start_time;
 
     // ==========================================
-    // 5. Global Metrics Reduction & Aggregation (4.4)
-    // For each version: sum matches, sum bytes, MAX elapsed time across ranks
-    // (the max is the true wall-clock time since ranks run concurrently).
+    // 5. Global Metrics Reduction & Aggregation
     // ==========================================
     long g_seq_matches = 0, g_a_matches = 0, g_b_matches = 0;
     long g_seq_bytes = 0, g_a_bytes = 0, g_b_bytes = 0;
@@ -254,7 +241,31 @@ int main(int argc, char *argv[]) {
     MPI_Reduce(&b_local_elapsed, &max_b_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     // ==========================================
-    // 6. Comparative Performance Report Output (single root-rank row)
+    // 5.2 Implement metric computation in C
+    // ==========================================
+    PerformanceMetrics metrics_seq, metrics_a, metrics_b;
+    double total_hardware_workers = (double)(num_ranks * config.num_omp_threads);
+
+    // Baseline calculation (Sequential)
+    metrics_seq.exec_time = max_seq_time;
+    metrics_seq.throughput_mb_s = ((double)g_seq_bytes / 1e6) / max_seq_time;
+    metrics_seq.speedup = 1.0;
+    metrics_seq.efficiency = 1.0 / total_hardware_workers;
+
+    // Version A Metrics
+    metrics_a.exec_time = max_a_time;
+    metrics_a.throughput_mb_s = ((double)g_a_bytes / 1e6) / max_a_time;
+    metrics_a.speedup = max_seq_time / max_a_time;
+    metrics_a.efficiency = metrics_a.speedup / total_hardware_workers;
+
+    // Version B Metrics
+    metrics_b.exec_time = max_b_time;
+    metrics_b.throughput_mb_s = ((double)g_b_bytes / 1e6) / max_b_time;
+    metrics_b.speedup = max_seq_time / max_b_time;
+    metrics_b.efficiency = metrics_b.speedup / total_hardware_workers;
+
+    // ==========================================
+    // 6. Comparative Performance Report Output & CSV Export
     // ==========================================
     if (rank == 0) {
         printf("=== Performance Evaluation Report ===\n");
@@ -265,38 +276,56 @@ int main(int argc, char *argv[]) {
         printf("  Global Packets Scanned: %u\n\n", config.packet_count);
 
         printf("  [SEQUENTIAL BASELINE]\n");
-        printf("    Max Wall Clock Time:  %f seconds\n", max_seq_time);
-        printf("    Total Bytes Scanned:  %ld Bytes\n", g_seq_bytes);
-        printf("    Total Matches Found:  %ld\n", g_seq_matches);
-        printf("    Throughput:           %f MB/s\n\n",
-               ((double)g_seq_bytes / (1024.0 * 1024.0)) / max_seq_time);
+        printf("    Max Wall Clock Time:  %f seconds\n", metrics_seq.exec_time);
+        printf("    Throughput:           %f MB/s\n\n", metrics_seq.throughput_mb_s);
 
         printf("  [VERSION A - static schedule]\n");
-        printf("    Max Wall Clock Time:  %f seconds\n", max_a_time);
-        printf("    Total Bytes Scanned:  %ld Bytes\n", g_a_bytes);
-        printf("    Total Matches Found:  %ld\n", g_a_matches);
-        printf("    Throughput:           %f MB/s\n\n",
-               ((double)g_a_bytes / (1024.0 * 1024.0)) / max_a_time);
+        printf("    Max Wall Clock Time:  %f seconds\n", metrics_a.exec_time);
+        printf("    Throughput:           %f MB/s\n", metrics_a.throughput_mb_s);
+        printf("    Calculated Speedup:   %fx\n", metrics_a.speedup);
+        printf("    Parallel Efficiency:  %f\n\n", metrics_a.efficiency);
 
         printf("  [VERSION B - %s schedule]\n", config.schedule_type);
-        printf("    Max Wall Clock Time:  %f seconds\n", max_b_time);
-        printf("    Total Bytes Scanned:  %ld Bytes\n", g_b_bytes);
-        printf("    Total Matches Found:  %ld\n", g_b_matches);
-        printf("    Throughput:           %f MB/s\n\n",
-               ((double)g_b_bytes / (1024.0 * 1024.0)) / max_b_time);
-
+        printf("    Max Wall Clock Time:  %f seconds\n", metrics_b.exec_time);
+        printf("    Throughput:           %f MB/s\n", metrics_b.throughput_mb_s);
+        printf("    Calculated Speedup:   %fx\n", metrics_b.speedup);
+        printf("    Parallel Efficiency:  %f\n\n", metrics_b.efficiency);
+        
         printf("  [EFFICIENCY METRICS]\n");
-        printf("    Speedup A vs Sequential: %fx\n", max_seq_time / max_a_time);
-        printf("    Speedup B vs Sequential: %fx\n", max_seq_time / max_b_time);
         printf("    Speedup B vs A:          %fx   <-- headline A/B result\n", max_a_time / max_b_time);
         printf("======================================\n");
 
-        // Sanity check: match counts should be identical across all three paths.
         if (g_seq_matches != g_a_matches || g_seq_matches != g_b_matches) {
-            fprintf(stderr,
-                "WARNING: match-count mismatch across versions (seq=%ld, A=%ld, B=%ld). "
-                "Check for race conditions in scanning or reduction clauses.\n",
-                g_seq_matches, g_a_matches, g_b_matches);
+            fprintf(stderr, "WARNING: match-count mismatch across versions.\n");
+        }
+
+        // Root rank appends row to CSV file
+        if (config.output_file[0] != '\0' && strcmp(config.output_format, "csv") == 0) {
+            int file_exists = (access(config.output_file, F_OK) == 0);
+            FILE *csv = fopen(config.output_file, "a");
+            
+            if (csv) {
+                // Write CSV header if creating a new file
+                if (!file_exists) {
+                    fprintf(csv, "mpi_ranks,omp_threads,b_schedule_type,b_schedule_chunk,global_packets,"
+                                 "seq_time,seq_throughput_mbs,seq_speedup,seq_efficiency,"
+                                 "a_time,a_throughput_mbs,a_speedup,a_efficiency,"
+                                 "b_time,b_throughput_mbs,b_speedup,b_efficiency\n");
+                }
+                // Append row containing exact metrics computed above
+                fprintf(csv, "%d,%u,%s,%u,%u,"
+                             "%f,%f,%f,%f,"
+                             "%f,%f,%f,%f,"
+                             "%f,%f,%f,%f\n",
+                        num_ranks, config.num_omp_threads, config.schedule_type, config.schedule_chunk, config.packet_count,
+                        metrics_seq.exec_time, metrics_seq.throughput_mb_s, metrics_seq.speedup, metrics_seq.efficiency,
+                        metrics_a.exec_time, metrics_a.throughput_mb_s, metrics_a.speedup, metrics_a.efficiency,
+                        metrics_b.exec_time, metrics_b.throughput_mb_s, metrics_b.speedup, metrics_b.efficiency);
+                fclose(csv);
+                printf("Metrics appended to CSV logging sink: %s\n", config.output_file);
+            } else {
+                fprintf(stderr, "Error: Failed to write metrics to CSV destination path: %s\n", config.output_file);
+            }
         }
     }
 

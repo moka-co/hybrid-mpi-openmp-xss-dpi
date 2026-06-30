@@ -48,9 +48,13 @@ run24: $(MAIN_BIN)
 	@echo "Launching DPI engine across hybrid MPI cluster layout..."
 	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 4 --schedule dynamic,16 --pattern-file datasets/patterns.txt
 
-run48: $(MAIN_BIN)
+run28: $(MAIN_BIN)
 	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 8 --schedule guided,16 --pattern-file datasets/patterns.txt
+	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 8 --schedule dynamic,16 --pattern-file datasets/patterns.txt
+
+run42: $(MAIN_BIN)
+	@echo "Launching DPI engine across hybrid MPI cluster layout..."
+	mpirun -np 3 ./$(MAIN_BIN) --omp-threads 2 --schedule dynamic,16 --pattern-file datasets/patterns.txt
 
 # Run specific tests or all of them
 test: test_basic test_file test_config
