@@ -15,12 +15,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdint.h>
+#include <limits.h>
 #include "../src/dataset.h"
 #include "../src/pattern_matching.h"
 
 #define NUM_PACKETS   1000000 //1.000.000
 #define SEED          42
 #define XSS_PROB      0.05
+#define MIN_PATTERN_LEN  3 // pattern shorter than this match random text
 
 // Load patterns from a file (one pattern per line), growing dynamically.
 static char **load_patterns_from_file(const char *filepath, int *out_count)
@@ -70,6 +73,50 @@ static char **load_patterns_from_file(const char *filepath, int *out_count)
     return patterns;
 }
 
+// Drop patterns shorter than min_len in place, compacting the array.
+// Returns the new count. Freed strings are released; the array itself is
+// NOT reallocated (caller's original capacity remains, just unused tail).
+static int filter_short_patterns(char **patterns, int count, int min_len)
+{
+    int kept = 0;
+    for (int i = 0; i < count; i++) {
+        if ((int)strlen(patterns[i]) >= min_len) {
+            patterns[kept++] = patterns[i];
+        } else {
+            free(patterns[i]);
+        }
+    }
+    return kept;
+}
+
+// Print a quick length histogram for the pattern list, so we can see
+// *why* the automaton might be over-matching (lots of very short patterns
+// will match random background text by sheer chance).
+static void log_pattern_length_stats(FILE *log, char **patterns, int count)
+{
+    int min_len = INT_MAX, max_len = 0;
+    long sum_len = 0;
+    int under4 = 0, under8 = 0;
+ 
+    for (int i = 0; i < count; i++) {
+        int len = (int)strlen(patterns[i]);
+        if (len < min_len) min_len = len;
+        if (len > max_len) max_len = len;
+        sum_len += len;
+        if (len < 4) under4++;
+        if (len < 8) under8++;
+    }
+ 
+    #define PLOG(...) do { printf(__VA_ARGS__); fprintf(log, __VA_ARGS__); } while (0)
+    PLOG("  Pattern length stats: min=%d max=%d mean=%.1f\n",
+         min_len, max_len, (double)sum_len / count);
+    PLOG("  Patterns shorter than 4 chars: %d (%.2f%%)\n",
+         under4, 100.0 * under4 / count);
+    PLOG("  Patterns shorter than 8 chars: %d (%.2f%%)\n",
+         under8, 100.0 * under8 / count);
+    #undef PLOG
+}
+
 int main(void)
 {
     FILE *log = fopen("validation_log.txt", "w");
@@ -93,7 +140,18 @@ int main(void)
         fclose(log);
         return 1;
     }
+
     LOG("  Patterns loaded: %d\n\n", num_patterns);
+
+    LOG("--- Pattern Length Diagnostic ---\n");
+    log_pattern_length_stats(log, patterns, num_patterns);
+    LOG("\n");
+ 
+    int before_filter = num_patterns;
+    num_patterns = filter_short_patterns(patterns, num_patterns, MIN_PATTERN_LEN);
+    LOG("Filtering patterns shorter than %d chars (these match random\n", MIN_PATTERN_LEN);
+    LOG("background text by chance too often to be useful signatures)...\n");
+    LOG("  Removed: %d, Remaining: %d\n\n", before_filter - num_patterns, num_patterns);
 
     // --- Build the automaton ---
     LOG("Building Aho-Corasick automaton...\n");
@@ -205,7 +263,7 @@ int main(void)
 
     for (int i = 0; i < NUM_PACKETS; i++) {
         ACMatchList ml = ac_scan(ac, packets[i].data, packets[i].len);
-        int detected = (ml.count > 2); //TODO: this is temporary, 
+        int detected = (ml.count > 0); //TODO: this is temporary, 
         // the problem with pattern matching is that it overestimates false positives
 
         if (packets[i].has_xss && detected)        true_positive++;
