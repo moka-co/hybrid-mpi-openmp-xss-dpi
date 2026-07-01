@@ -8,6 +8,19 @@ An hybrid Open MPI + OpenMP Deep Packet Inspection for XSS detection
 make test # to run a basic test
 ```
 
+It is highly suggested to run the benchmarks in the Makefile:
 ```bash
-make clean # to clean up objects
+make benchmark
+make benchmark_t NUM_THREADS=4
+make benchmark_p NUM_PROCESS=2
+make benchmark_pt NUM_PROCESS=2 NUM_THREADS=4
 ```
+
+Results are saved under `results/`. After running these, it is possible to generate plots:
+```
+cd analysis
+python3 -m uv run ./plot.py 
+```
+
+The output will be saved under `analysis/plots/`.
+
