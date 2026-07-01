@@ -134,7 +134,11 @@ int main(int argc, char *argv[]) {
     omp_set_schedule(selected_sched, (int)config.schedule_chunk);
     #endif
 
+<<<<<<< Updated upstream
     // 3. Load Pattern Signatures & Build Aho-Corasick Automaton locally on all ranks
+=======
+    printf("Building the Automaton...\n");
+>>>>>>> Stashed changes
     char **patterns = NULL;
     int pattern_count = load_patterns_from_file(config.pattern_file, &patterns);
     if (pattern_count < 0) {
@@ -152,7 +156,12 @@ int main(int argc, char *argv[]) {
 
     config.num_patterns = (uint32_t)pattern_count;
 
+<<<<<<< Updated upstream
     // 4. Shard Loading from the real generated binary packet file
+=======
+    Printf("Automaton Build!\n");
+
+>>>>>>> Stashed changes
     Packet *local_packets = NULL;
     uint32_t num_packets_local = 0;
     load_binary_dataset_shard("datasets/packets.bin", rank, num_ranks, &local_packets, &num_packets_local);
@@ -169,14 +178,16 @@ int main(int argc, char *argv[]) {
     long seq_matches = 0;
     long seq_bytes_scanned = 0;
 
+    ACMatchList seq_ml; 
+    ac_matchlist_init(&seq_ml, 16); //initialize with initial capacity 32
+
     MPI_Barrier(MPI_COMM_WORLD);
     double seq_start_time = MPI_Wtime();
 
     for (uint32_t i = 0; i < num_packets_local; i++) {
-        ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
-        seq_matches += ml.count;
+        ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &seq_ml);
+        seq_matches += seq_ml.count;
         seq_bytes_scanned += local_packets[i].len;
-        ac_free_matches(&ml);
     }
 
     double seq_end_time = MPI_Wtime();
@@ -192,15 +203,19 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     double a_start_time = MPI_Wtime();
 
-    #pragma omp parallel for \
-        schedule(static) \
-        num_threads(config.num_omp_threads) \
-        reduction(+:a_matches, a_bytes_scanned)
-    for (uint32_t i = 0; i < num_packets_local; i++) {
-        ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
-        a_matches += ml.count;
-        a_bytes_scanned += local_packets[i].len;
-        ac_free_matches(&ml);
+    #pragma omp parallel num_threads(config.num_omp_threads)
+    {
+        ACMatchList a_ml;
+        ac_matchlist_init(&a_ml, 16); // once per thread, not per packet
+
+        #pragma omp for schedule(static) reduction(+:a_matches, a_bytes_scanned)
+        for (uint32_t i = 0; i < num_packets_local; i++) {
+            ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &a_ml);
+            a_matches += a_ml.count;
+            a_bytes_scanned += local_packets[i].len;
+        }
+
+        ac_free_matches(&a_ml); // once per thread, at the end
     }
 
     double a_end_time = MPI_Wtime();

@@ -1,0 +1,3 @@
+mpi_ranks,omp_threads,b_schedule_type,b_schedule_chunk,global_packets,seq_time,seq_throughput_mbs,seq_speedup,seq_efficiency,a_time,a_throughput_mbs,a_speedup,a_efficiency,b_time,b_throughput_mbs,b_speedup,b_efficiency
+2,4,dynamic,16,1,16.593929,85.256683,1.000000,0.125000,16.625627,85.094136,0.998093,0.124762,16.814048,84.140558,0.986909,0.123364
+2,4,dynamic,16,1,15.952116,88.686878,1.000000,0.125000,15.713193,90.035387,1.015205,0.126901,16.922939,83.599155,0.942633,0.117829
