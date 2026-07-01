@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    printf("Rank %d: Starting scan...\n", rank);
+    printf("Rank %d: Scanning packets (measuring time)...\n", rank);
     MPI_Barrier(MPI_COMM_WORLD);
     double scan_start = MPI_Wtime();
     
@@ -156,31 +156,50 @@ int main(int argc, char *argv[])
         double avg_time_per_packet_us = (scan_time / total_packets) * 1e6;
         double avg_time_per_byte_ns = (scan_time / total_bytes) * 1e9;
 
-        printf("  Scan time: %.6f sec\n", scan_time);
-        printf("  Total matches found: %llu\n\n", total_matches);
-        printf("Performance Metrics\n");
-        printf("  ================================\n");
-        printf("  Throughput:        %.2f MB/s\n", throughput_mb_per_sec);
-        printf("  Packets/sec:       %.0f\n", packets_per_sec);
-        printf("  Avg time/packet:   %.3f µs\n", avg_time_per_packet_us);
-        printf("  Avg time/byte:     %.2f ns\n", avg_time_per_byte_ns);
-        printf("  ================================\n\n");
+        // Generate JSON
+        char json_buffer[4096];
+        int len = snprintf(json_buffer, sizeof(json_buffer),
+            "{\n"
+            "  \"Configuration\": {\n"
+            "    \"patterns_count\": %d,\n"
+            "    \"automaton_states\": %d,\n"
+            "    \"test_packets\": %d,\n"
+            "    \"total_data_scanned_mb\": %.2f,\n"
+            "    \"avg_packet_size\": %.1f,\n"
+            "    \"processes\": %d,\n"
+            "    \"threads\": 1\n"
+            "  },\n"
+            "  \"Results\": {\n"
+            "    \"scan_time_sec\": %.6f,\n"
+            "    \"total_matches\": %llu,\n"
+            "    \"throughput_mb_s\": %.2f,\n"
+            "    \"packets_per_sec\": %.0f,\n"
+            "    \"avg_time_per_packet_us\": %.3f,\n"
+            "    \"avg_time_per_byte_ns\": %.2f\n"
+            "  },\n"
+            "  \"BottleneckNotes\": {\n"
+            "    \"automaton_states\": %d,\n"
+            "    \"bytes_scanned_per_state\": %.0f,\n"
+            "    \"ac_state_struct_size_bytes\": %zu,\n"
+            "    \"goto_table_size_bytes\": %zu\n"
+            "  }\n"
+            "}",
+            num_patterns, num_states, total_packets, total_bytes / 1e6, total_bytes / total_packets, size,
+            scan_time, total_matches, throughput_mb_per_sec, packets_per_sec, avg_time_per_packet_us, avg_time_per_byte_ns,
+            num_states, total_bytes / num_states, sizeof(ACState), AC_ALPHABET_SIZE * sizeof(int));
 
-        char filename[128];
-        snprintf(filename, sizeof(filename), "multiprocess_benchmark_%dp.txt", size);
-        printf("Saving results to %s...\n", filename);
+        // Print to stdout
+        printf("%s\n", json_buffer);
+
+        // Save to file
+        char filename[64];
+        snprintf(filename, sizeof(filename), "results/benchmark_ac_p%d.json", size);
         FILE *f = fopen(filename, "w");
         if (f) {
-            fprintf(f, "=== Pattern Matching Multiprocess Performance Report (%d processes) ===\n\n", size);
-            fprintf(f, "Results:\n");
-            fprintf(f, "  Scan time:             %.6f sec\n", scan_time);
-            fprintf(f, "  Total matches:         %llu\n", total_matches);
-            fprintf(f, "  Throughput:            %.2f MB/s\n", throughput_mb_per_sec);
-            fprintf(f, "  Packets/sec:           %.0f\n", packets_per_sec);
-            fprintf(f, "  Avg time/packet:       %.3f µs\n", avg_time_per_packet_us);
-            fprintf(f, "  Avg time/byte:         %.2f ns\n", avg_time_per_byte_ns);
+            fprintf(f, "%s\n", json_buffer);
             fclose(f);
         }
+        printf("=== Benchmark Complete ===\n");
     }
 
     // Cleanup
