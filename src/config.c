@@ -24,6 +24,7 @@ void init_default_config(Config *cfg) {
     cfg->num_patterns = 0;
     cfg->num_mpi_ranks = 1;
     cfg->num_omp_threads = 4;              // 4 OMP threads default
+    strncpy(cfg->strategy_type, "all", sizeof(cfg->strategy_type) - 1);
     strncpy(cfg->schedule_type, "static", sizeof(cfg->schedule_type) - 1);
     cfg->schedule_chunk = 0;               // 0 means default chunk sizing
     strncpy(cfg->output_file, "results.csv", sizeof(cfg->output_file) - 1);
@@ -42,6 +43,7 @@ void print_usage(const char *prog_name) {
     fprintf(stderr, "  --pattern-file <str> Path to signature pattern file (default: patterns.txt)\n");
     fprintf(stderr, "  --mpi-ranks <num>    Target MPI ranks (default: 1)\n");
     fprintf(stderr, "  --omp-threads <num>  Number of OpenMP threads (default: 4)\n");
+    fprintf(stderr, "  --strategy <str>     Strategy: sequential, omp, mpi, hybrid (default: hybrid)\n");
     fprintf(stderr, "  --schedule <str>     OpenMP schedule: static, dynamic, guided (default: static)\n");
     fprintf(stderr, "  --seed <num>         Random seed generation index (default: 42)\n");
     fprintf(stderr, "  --output <str>       Output filepath metrics destination (default: results.csv)\n");
@@ -61,6 +63,7 @@ void parse_arguments(int argc, char *argv[], Config *cfg) {
         {"pattern-file", required_argument, 0, 'f'},
         {"mpi-ranks",    required_argument, 0, 'm'},
         {"omp-threads",  required_argument, 0, 't'},
+        {"strategy",     required_argument, 0, 'A'},
         {"schedule",     required_argument, 0, 's'},
         {"seed",         required_argument, 0, 'r'},
         {"output",       required_argument, 0, 'o'},
@@ -91,6 +94,9 @@ void parse_arguments(int argc, char *argv[], Config *cfg) {
                 break;
             case 't':
                 cfg->num_omp_threads = (uint32_t)strtoul(optarg, NULL, 10);
+                break;
+            case 'A':
+                strncpy(cfg->strategy_type, optarg, sizeof(cfg->strategy_type) - 1);
                 break;
             case 's': {
                 char *chunk = strchr(optarg, ',');
@@ -178,6 +184,7 @@ void print_config(const Config *cfg) {
     printf("  Pattern File:       %s\n", cfg->pattern_file);
     printf("  MPI Ranks:          %u\n", cfg->num_mpi_ranks);
     printf("  OpenMP Threads:     %u\n", cfg->num_omp_threads);
+    printf("  Strategy:           %s\n", cfg->strategy_type);
     printf("  OMP Schedule:       %s (Chunk: %u)\n", cfg->schedule_type, cfg->schedule_chunk);
     printf("  Output File:        %s\n", cfg->output_file);
     printf("  Output Format:      %s\n", cfg->output_format);

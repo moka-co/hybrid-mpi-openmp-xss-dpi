@@ -11,6 +11,7 @@ typedef struct {
     uint32_t num_patterns;
     uint32_t num_mpi_ranks;
     uint32_t num_omp_threads;
+    char strategy_type[16];        // "sequential", "omp", "mpi", "hybrid"
     char schedule_type[16];       // "static" or "dynamic" or "guided"
     uint32_t schedule_chunk;
     char output_file[256];

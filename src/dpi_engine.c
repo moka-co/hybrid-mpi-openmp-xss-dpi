@@ -1,34 +1,30 @@
-#include <mpi.h>
-#include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h> // For access()
+#include <unistd.h>
 #include "config.h"
 #include "dataset.h"
 #include "pattern_matching.h"
+#include "performance.h"
 
-// 5.1 Define schema in C as a struct
-typedef struct {
-    double exec_time;
-    double throughput_mb_s;
-    double speedup;
-    double efficiency;
-} PerformanceMetrics;
+#ifdef HAVE_MPI
+#include <mpi.h>
+#endif
 
-// Helper function to load patterns from a text file cleanly on all ranks
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+// Helper to load patterns
 static int load_patterns_from_file(const char *filename, char ***patterns_out) {
     FILE *f = fopen(filename, "r");
     if (!f) return -1;
-
     char **patterns = NULL;
     int count = 0;
     char line[256];
-
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = '\0';
         if (strlen(line) == 0) continue;
-
         char **tmp = realloc(patterns, (count + 1) * sizeof(char *));
         if (!tmp) {
             for (int i = 0; i < count; i++) free(patterns[i]);
@@ -40,13 +36,12 @@ static int load_patterns_from_file(const char *filename, char ***patterns_out) {
         patterns[count] = strdup(line);
         count++;
     }
-
     fclose(f);
     *patterns_out = patterns;
     return count;
 }
 
-// Reads the actual binary packet dataset file and distributes shards to MPI ranks
+// Helper to load dataset shards
 void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Packet **packets, uint32_t *local_count) {
     FILE *f = fopen(filename, "rb");
     if (!f) {
@@ -55,32 +50,26 @@ void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Pa
         *packets = NULL;
         return;
     }
-
     uint32_t total_packets = 0;
     uint32_t p_size;
     while (fread(&p_size, sizeof(uint32_t), 1, f) == 1) {
         fseek(f, p_size, SEEK_CUR);
         total_packets++;
     }
-
     uint32_t count = total_packets / num_ranks;
     int remainder = total_packets % num_ranks;
     uint32_t start_idx = rank * count + (rank < remainder ? rank : remainder);
     if (rank < remainder) count++;
-
     *local_count = count;
     *packets = malloc(count * sizeof(Packet));
-
     rewind(f);
     uint32_t current_idx = 0;
     uint32_t populated = 0;
-
     while (fread(&p_size, sizeof(uint32_t), 1, f) == 1) {
         if (current_idx >= start_idx && populated < count) {
             (*packets)[populated].len = p_size;
             (*packets)[populated].data = malloc(p_size);
-            size_t read_bytes = fread((*packets)[populated].data, 1, p_size, f);
-            (void)read_bytes;
+            fread((*packets)[populated].data, 1, p_size, f);
             populated++;
         } else {
             fseek(f, p_size, SEEK_CUR);
@@ -91,364 +80,214 @@ void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Pa
     fclose(f);
 }
 
+// Strategies
+void run_sequential(const Config *config, ACAutomaton *ac, Packet *packets, uint32_t num_packets, PerformanceMetrics *metrics) {
+    long matches = 0;
+    long bytes_scanned = 0;
+    double start_time = MPI_Wtime();
+    ACMatchList ml;
+    ac_matchlist_init(&ml, 64);
+    for (uint32_t i = 0; i < num_packets; i++) {
+        ac_scan_into(ac, (const uint8_t *)packets[i].data, packets[i].len, &ml);
+        matches += ml.count;
+        bytes_scanned += packets[i].len;
+    }
+    ac_free_matches(&ml);
+    double elapsed = MPI_Wtime() - start_time;
+    compute_metrics(metrics, elapsed, bytes_scanned, elapsed, 1);
+}
+
+void run_omp(const Config *config, ACAutomaton *ac, Packet *packets, uint32_t num_packets, PerformanceMetrics *metrics) {
+#ifdef _OPENMP
+    long matches = 0;
+    long bytes_scanned = 0;
+    omp_sched_t selected_sched = omp_sched_dynamic;
+    if (strcmp(config->schedule_type, "guided") == 0) selected_sched = omp_sched_guided;
+    else if (strcmp(config->schedule_type, "static") == 0) selected_sched = omp_sched_static;
+    omp_set_schedule(selected_sched, (int)config->schedule_chunk);
+    double start_time = MPI_Wtime();
+    #pragma omp parallel num_threads(config->num_omp_threads) reduction(+:matches, bytes_scanned)
+    {
+        ACMatchList ml;
+        ac_matchlist_init(&ml, 64);
+        #pragma omp for schedule(runtime)
+        for (uint32_t i = 0; i < num_packets; i++) {
+            ac_scan_into(ac, (const uint8_t *)packets[i].data, packets[i].len, &ml);
+            matches += ml.count;
+            bytes_scanned += packets[i].len;
+        }
+        ac_free_matches(&ml);
+    }
+    double elapsed = MPI_Wtime() - start_time;
+    compute_metrics(metrics, elapsed, bytes_scanned, elapsed, config->num_omp_threads);
+#else
+    fprintf(stderr, "OMP not supported.\n");
+#endif
+}
+
+void run_mpi(const Config *config, ACAutomaton *ac, Packet *packets, uint32_t num_packets, PerformanceMetrics *metrics, int rank, int num_ranks, double baseline_time) {
+#ifdef HAVE_MPI
+    long matches = 0;
+    long bytes_scanned = 0;
+    double start_time = MPI_Wtime();
+    ACMatchList ml;
+    ac_matchlist_init(&ml, 64);
+    for (uint32_t i = 0; i < num_packets; i++) {
+        ac_scan_into(ac, (const uint8_t *)packets[i].data, packets[i].len, &ml);
+        matches += ml.count;
+        bytes_scanned += packets[i].len;
+    }
+    ac_free_matches(&ml);
+    double local_elapsed = MPI_Wtime() - start_time;
+    long g_matches = 0, g_bytes = 0;
+    double max_time = 0.0;
+    MPI_Reduce(&matches, &g_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&bytes_scanned, &g_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&local_elapsed, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    if (rank == 0) compute_metrics(metrics, max_time, g_bytes, baseline_time, num_ranks);
+#endif
+}
+
+void run_hybrid(const Config *config, ACAutomaton *ac, Packet *packets, uint32_t num_packets, PerformanceMetrics *metrics, int rank, int num_ranks, double baseline_time) {
+#if defined(HAVE_MPI) && defined(_OPENMP)
+    long matches = 0;
+    long bytes_scanned = 0;
+    omp_sched_t selected_sched = omp_sched_dynamic;
+    if (strcmp(config->schedule_type, "guided") == 0) selected_sched = omp_sched_guided;
+    else if (strcmp(config->schedule_type, "static") == 0) selected_sched = omp_sched_static;
+    omp_set_schedule(selected_sched, (int)config->schedule_chunk);
+    double start_time = MPI_Wtime();
+    #pragma omp parallel num_threads(config->num_omp_threads) reduction(+:matches, bytes_scanned)
+    {
+        ACMatchList ml;
+        ac_matchlist_init(&ml, 64);
+        #pragma omp for schedule(runtime)
+        for (uint32_t i = 0; i < num_packets; i++) {
+            ac_scan_into(ac, (const uint8_t *)packets[i].data, packets[i].len, &ml);
+            matches += ml.count;
+            bytes_scanned += packets[i].len;
+        }
+        ac_free_matches(&ml);
+    }
+    double local_elapsed = MPI_Wtime() - start_time;
+    long g_matches = 0, g_bytes = 0;
+    double max_time = 0.0;
+    MPI_Reduce(&matches, &g_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&bytes_scanned, &g_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&local_elapsed, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    if (rank == 0) compute_metrics(metrics, max_time, g_bytes, baseline_time, num_ranks * config->num_omp_threads);
+#endif
+}
+
 int main(int argc, char *argv[]) {
-    int mpi_provided;
-    MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &mpi_provided);
-
-    int rank, num_ranks;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
-
     Config config;
-    SystemMetadata metadata;
-
     init_default_config(&config);
     parse_arguments(argc, argv, &config);
-    config.num_mpi_ranks = num_ranks;
-
-    if (rank == 0) {
-        if (!validate_config(&config)) {
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-            exit(EXIT_FAILURE);
-        }
-        capture_metadata(&metadata);
-        printf("\n=== Metadata Environment Verification ===\n");
-        printf("Host: %s | GCC: %s | MPI: %s | Kernel: %s\n\n",
-               metadata.hostname, metadata.gcc_version, metadata.mpi_version, metadata.sys_info);
+    int rank = 0, num_ranks = 1, mpi_initialized = 0;
+    int is_mpi_strategy = (strcmp(config.strategy_type, "mpi") == 0 || strcmp(config.strategy_type, "hybrid") == 0 || strcmp(config.strategy_type, "all") == 0);
+#ifdef HAVE_MPI
+    if (is_mpi_strategy) {
+        int mpi_provided;
+        MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &mpi_provided);
+        mpi_initialized = 1;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
+        config.num_mpi_ranks = num_ranks;
     }
-
-    MPI_Bcast(&config, sizeof(Config), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-    #ifdef _OPENMP
-    omp_sched_t selected_sched = omp_sched_dynamic;
-    if (strcmp(config.schedule_type, "guided") == 0) {
-        selected_sched = omp_sched_guided;
-    } else if (strcmp(config.schedule_type, "static") == 0) {
-        selected_sched = omp_sched_static;
-    }
-    omp_set_schedule(selected_sched, (int)config.schedule_chunk);
-    #endif
-
+#endif
+    if (rank == 0 && !validate_config(&config)) exit(EXIT_FAILURE);
     char **patterns = NULL;
     int pattern_count = 0;
     ACAutomaton *ac = NULL;
-
-    // Start tracking the duration of the automaton generation and scattering phase
-    double aut_start_time = MPI_Wtime();
-
     if (rank == 0) {
         pattern_count = load_patterns_from_file(config.pattern_file, &patterns);
-        if (pattern_count < 0) {
-            fprintf(stderr, "[Rank %d] Error: Failed to open or read pattern file: %s\n", rank, config.pattern_file);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-            exit(EXIT_FAILURE);
-        }
-
+        if (pattern_count < 0) exit(EXIT_FAILURE);
         ac = ac_build((const char **)patterns, pattern_count);
-        if (!ac) {
-            fprintf(stderr, "[Rank %d] Error: Failed to construct Aho-Corasick automaton\n", rank);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-            exit(EXIT_FAILURE);
-        }
         config.num_patterns = (uint32_t)pattern_count;
     }
-
-    // Extract structure properties from rank 0 to distribute to the cluster
-    int num_states = 0;
-    int capacity = 0;
-    if (rank == 0) {
-        num_states = ac->num_states;
-        capacity = ac->capacity;
-    }
-
-    MPI_Bcast(&pattern_count, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&num_states, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&capacity, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // Allocate and rebuild automaton containers on non-zero worker ranks
-    if (rank != 0) {
-        config.num_patterns = (uint32_t)pattern_count;
-        ac = (ACAutomaton *)malloc(sizeof(ACAutomaton));
-        if (!ac) {
-            fprintf(stderr, "[Rank %d] Error: Failed to allocate memory for automaton container\n", rank);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-            exit(EXIT_FAILURE);
+#ifdef HAVE_MPI
+    if (is_mpi_strategy) {
+        MPI_Bcast(&config, sizeof(Config), MPI_BYTE, 0, MPI_COMM_WORLD);
+        int num_states = (rank == 0) ? ac->num_states : 0;
+        int capacity = (rank == 0) ? ac->capacity : 0;
+        MPI_Bcast(&pattern_count, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&num_states, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&capacity, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        if (rank != 0) {
+            config.num_patterns = (uint32_t)pattern_count;
+            ac = (ACAutomaton *)malloc(sizeof(ACAutomaton));
+            ac->num_states = num_states;
+            ac->capacity = capacity;
+            ac->num_patterns = pattern_count;
+            ac->states = (ACState *)malloc(sizeof(ACState) * capacity);
+            ac->output_next = (int *)malloc(sizeof(int) * capacity);
         }
-        ac->num_states = num_states;
-        ac->capacity = capacity;
-        ac->num_patterns = pattern_count;
-        ac->patterns = NULL; // Worker ranks do not need raw string pointers for matching
-        ac->states = (ACState *)malloc(sizeof(ACState) * capacity);
-        ac->output_next = (int *)malloc(sizeof(int) * capacity);
-        if (!ac->states || !ac->output_next) {
-            fprintf(stderr, "[Rank %d] Error: Failed to allocate automaton internal state buffers\n", rank);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-            exit(EXIT_FAILURE);
+        
+        const size_t MAX_MPI_CHUNK_SIZE = 512 * 1024 * 1024;
+        
+        size_t states_bytes_left = (size_t)capacity * sizeof(ACState);
+        size_t states_offset = 0;
+        while (states_bytes_left > 0) {
+            int chunk = (states_bytes_left > MAX_MPI_CHUNK_SIZE) ? (int)MAX_MPI_CHUNK_SIZE : (int)states_bytes_left;
+            MPI_Bcast((char *)ac->states + states_offset, chunk, MPI_BYTE, 0, MPI_COMM_WORLD);
+            states_offset += chunk;
+            states_bytes_left -= chunk;
+        }
+        
+        size_t output_bytes_left = (size_t)capacity * sizeof(int);
+        size_t output_offset = 0;
+        while (output_bytes_left > 0) {
+            int chunk = (output_bytes_left > MAX_MPI_CHUNK_SIZE) ? (int)MAX_MPI_CHUNK_SIZE : (int)output_bytes_left;
+            MPI_Bcast((char *)ac->output_next + output_offset, chunk, MPI_BYTE, 0, MPI_COMM_WORLD);
+            output_offset += chunk;
+            output_bytes_left -= chunk;
         }
     }
-
-    // Prevents signed 32-bit integer overflow for large structures
-    const size_t MAX_MPI_CHUNK_SIZE = 512 * 1024 * 1024; // 512 MB safe blocks
-
-    // 1. Broadcast the flat state array
-    size_t states_bytes_left = (size_t)capacity * sizeof(ACState);
-    size_t states_offset = 0;
-    while (states_bytes_left > 0) {
-        int chunk = (states_bytes_left > MAX_MPI_CHUNK_SIZE) ? (int)MAX_MPI_CHUNK_SIZE : (int)states_bytes_left;
-        MPI_Bcast((char *)ac->states + states_offset, chunk, MPI_BYTE, 0, MPI_COMM_WORLD);
-        states_offset += chunk;
-        states_bytes_left -= chunk;
-    }
-
-    // 2. Broadcast the parallel output chains array
-    size_t output_bytes_left = (size_t)capacity * sizeof(int);
-    size_t output_offset = 0;
-    while (output_bytes_left > 0) {
-        int chunk = (output_bytes_left > MAX_MPI_CHUNK_SIZE) ? (int)MAX_MPI_CHUNK_SIZE : (int)output_bytes_left;
-        MPI_Bcast((char *)ac->output_next + output_offset, chunk, MPI_BYTE, 0, MPI_COMM_WORLD);
-        output_offset += chunk;
-        output_bytes_left -= chunk;
-    }
-
-    double aut_end_time = MPI_Wtime();
-    if (rank == 0) {
-        printf("=== Automaton Setup Timing ===\n");
-        printf("  Time spent building and distributing automaton: %f seconds\n\n", aut_end_time - aut_start_time);
-    }
-
+#endif
     Packet *local_packets = NULL;
     uint32_t num_packets_local = 0;
     load_binary_dataset_shard(config.dataset_file, rank, num_ranks, &local_packets, &num_packets_local);
-
-    uint32_t global_packet_total = 0;
-    MPI_Allreduce(&num_packets_local, &global_packet_total, 1, MPI_UINT32_T, MPI_SUM, MPI_COMM_WORLD);
-    config.packet_count = global_packet_total;
-
-    // Accumulate local buffer size lengths and aggregate globally to update dataset_size
-    uint64_t local_bytes_total = 0;
-    for (uint32_t i = 0; i < num_packets_local; i++) {
-        local_bytes_total += local_packets[i].len;
-    }
-    uint64_t global_bytes_total = 0;
-    MPI_Allreduce(&local_bytes_total, &global_bytes_total, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
-    config.dataset_size = global_bytes_total;
+    PerformanceMetrics m_seq, m_omp, m_mpi, m_hybrid;
+    memset(&m_seq, 0, sizeof(PerformanceMetrics));
+    memset(&m_omp, 0, sizeof(PerformanceMetrics));
+    memset(&m_mpi, 0, sizeof(PerformanceMetrics));
+    memset(&m_hybrid, 0, sizeof(PerformanceMetrics));
     
-
-    if (rank == 0){
-        print_config(&config);
+    int run_all = (strcmp(config.strategy_type, "all") == 0);
+    
+    if (run_all || strcmp(config.strategy_type, "sequential") == 0) {
+        run_sequential(&config, ac, local_packets, num_packets_local, &m_seq);
+        if (rank == 0) print_performance_report(&config, "sequential", &m_seq, 1);
     }
-
-    // ==========================================
-    // PATH 1: Pure Sequential Baseline
-    // ==========================================
-    long seq_matches = 0;
-    long seq_bytes_scanned = 0;
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    double seq_start_time = MPI_Wtime();
-
-    // Reusable match list allocated exactly once for the sequential path
-    ACMatchList seq_ml;
-    ac_matchlist_init(&seq_ml, 64);
-
-    for (uint32_t i = 0; i < num_packets_local; i++) {
-        ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &seq_ml);
-        seq_matches += seq_ml.count;
-        seq_bytes_scanned += local_packets[i].len;
+    if (run_all || strcmp(config.strategy_type, "omp") == 0) {
+        run_omp(&config, ac, local_packets, num_packets_local, &m_omp);
+        if (rank == 0) print_performance_report(&config, "omp", &m_omp, config.num_omp_threads);
     }
-    ac_free_matches(&seq_ml);
-
-    double seq_end_time = MPI_Wtime();
-    double seq_local_elapsed = seq_end_time - seq_start_time;
-
-    // ==========================================
-    // PATH 2: VERSION A — Naive Static Schedule
-    // ==========================================
-    long a_matches = 0;
-    long a_bytes_scanned = 0;
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    double a_start_time = MPI_Wtime();
-
-    // Combined parallel region ensures memory allocations occur once per thread worker
-    #pragma omp parallel \
-        num_threads(config.num_omp_threads) \
-        reduction(+:a_matches, a_bytes_scanned)
-    {
-        ACMatchList a_ml;
-        ac_matchlist_init(&a_ml, 64);
-
-        #pragma omp for schedule(static)
-        for (uint32_t i = 0; i < num_packets_local; i++) {
-            ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &a_ml);
-            a_matches += a_ml.count;
-            a_bytes_scanned += local_packets[i].len;
-        }
-        ac_free_matches(&a_ml);
+    if (is_mpi_strategy && (run_all || strcmp(config.strategy_type, "mpi") == 0)) {
+        run_mpi(&config, ac, local_packets, num_packets_local, &m_mpi, rank, num_ranks, m_seq.exec_time > 0 ? m_seq.exec_time : 1.0);
+        if (rank == 0) print_performance_report(&config, "mpi", &m_mpi, num_ranks);
     }
-
-    double a_end_time = MPI_Wtime();
-    double a_local_elapsed = a_end_time - a_start_time;
-
-    // ==========================================
-    // PATH 3: VERSION B — Optimized Dynamic/Guided Schedule
-    // ==========================================
-    long b_matches = 0;
-    long b_bytes_scanned = 0;
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    double b_start_time = MPI_Wtime();
-
-    // Combined parallel region ensures memory allocations occur once per thread worker
-    #pragma omp parallel \
-        num_threads(config.num_omp_threads) \
-        reduction(+:b_matches, b_bytes_scanned)
-    {
-        ACMatchList b_ml;
-        ac_matchlist_init(&b_ml, 64);
-
-        #pragma omp for schedule(runtime)
-        for (uint32_t i = 0; i < num_packets_local; i++) {
-            ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &b_ml);
-            b_matches += b_ml.count;
-            b_bytes_scanned += local_packets[i].len;
-        }
-        ac_free_matches(&b_ml);
+    if (is_mpi_strategy && (run_all || strcmp(config.strategy_type, "hybrid") == 0)) {
+        run_hybrid(&config, ac, local_packets, num_packets_local, &m_hybrid, rank, num_ranks, m_seq.exec_time > 0 ? m_seq.exec_time : 1.0);
+        if (rank == 0) print_performance_report(&config, "hybrid", &m_hybrid, num_ranks * config.num_omp_threads);
     }
-
-    double b_end_time = MPI_Wtime();
-    double b_local_elapsed = b_end_time - b_start_time;
-
-    // ==========================================
-    // 5. Global Metrics Reduction & Aggregation
-    // ==========================================
-    long g_seq_matches = 0, g_a_matches = 0, g_b_matches = 0;
-    long g_seq_bytes = 0, g_a_bytes = 0, g_b_bytes = 0;
-    double max_seq_time = 0.0, max_a_time = 0.0, max_b_time = 0.0;
-
-    MPI_Reduce(&seq_matches, &g_seq_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&seq_bytes_scanned, &g_seq_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&seq_local_elapsed, &max_seq_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-
-    MPI_Reduce(&a_matches, &g_a_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&a_bytes_scanned, &g_a_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&a_local_elapsed, &max_a_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-
-    MPI_Reduce(&b_matches, &g_b_matches, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&b_bytes_scanned, &g_b_bytes, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&b_local_elapsed, &max_b_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-
-    // ==========================================
-    // 5.2 Implement metric computation in C
-    // ==========================================
-    PerformanceMetrics metrics_seq, metrics_a, metrics_b;
-    double total_hardware_workers = (double)(num_ranks * config.num_omp_threads);
-
-    // Baseline calculation (Sequential)
-    metrics_seq.exec_time = max_seq_time;
-    metrics_seq.throughput_mb_s = ((double)g_seq_bytes / 1e6) / max_seq_time;
-    metrics_seq.speedup = 1.0;
-    metrics_seq.efficiency = 1.0 / total_hardware_workers;
-
-    // Version A Metrics
-    metrics_a.exec_time = max_a_time;
-    metrics_a.throughput_mb_s = ((double)g_a_bytes / 1e6) / max_a_time;
-    metrics_a.speedup = max_seq_time / max_a_time;
-    metrics_a.efficiency = metrics_a.speedup / total_hardware_workers;
-
-    // Version B Metrics
-    metrics_b.exec_time = max_b_time;
-    metrics_b.throughput_mb_s = ((double)g_b_bytes / 1e6) / max_b_time;
-    metrics_b.speedup = max_seq_time / max_b_time;
-    metrics_b.efficiency = metrics_b.speedup / total_hardware_workers;
-
-    // ==========================================
-    // 6. Comparative Performance Report Output & CSV Export
-    // ==========================================
-    if (rank == 0) {
-        printf("=== Performance Evaluation Report ===\n");
-        printf("  Total MPI Ranks Active: %d\n", num_ranks);
-        printf("  OMP Threads per Rank:   %u\n", config.num_omp_threads);
-        printf("  Version B Schedule:     %s (Chunk: %u)\n", config.schedule_type, config.schedule_chunk);
-        printf("  Dataset File:           %s\n", config.dataset_file);
-        printf("  Loaded Signatures Count:%u\n", config.num_patterns);
-        printf("  Global Packets Scanned: %u\n\n", config.packet_count);
-
-        printf("  [SEQUENTIAL BASELINE]\n");
-        printf("    Max Wall Clock Time:  %f seconds\n", metrics_seq.exec_time);
-        printf("    Throughput:           %f MB/s\n\n", metrics_seq.throughput_mb_s);
-
-        printf("  [VERSION A - static schedule]\n");
-        printf("    Max Wall Clock Time:  %f seconds\n", metrics_a.exec_time);
-        printf("    Throughput:           %f MB/s\n", metrics_a.throughput_mb_s);
-        printf("    Calculated Speedup:   %fx\n", metrics_a.speedup);
-        printf("    Parallel Efficiency:  %f\n\n", metrics_a.efficiency);
-
-        printf("  [VERSION B - %s schedule]\n", config.schedule_type);
-        printf("    Max Wall Clock Time:  %f seconds\n", metrics_b.exec_time);
-        printf("    Throughput:           %f MB/s\n", metrics_b.throughput_mb_s);
-        printf("    Calculated Speedup:   %fx\n", metrics_b.speedup);
-        printf("    Parallel Efficiency:  %f\n\n", metrics_b.efficiency);
-        
-        printf("  [EFFICIENCY METRICS]\n");
-        printf("    Speedup B vs A:          %fx   <-- headline A/B result\n", max_a_time / max_b_time);
-        printf("======================================\n");
-
-        if (g_seq_matches != g_a_matches || g_seq_matches != g_b_matches) {
-            fprintf(stderr, "WARNING: match-count mismatch across versions.\n");
-        }
-
-        // Root rank appends row to CSV file
-        if (config.output_file[0] != '\0' && strcmp(config.output_format, "csv") == 0) {
-            int file_exists = (access(config.output_file, F_OK) == 0);
-            FILE *csv = fopen(config.output_file, "a");
-            
-            if (csv) {
-                // Write CSV header if creating a new file
-                if (!file_exists) {
-                    fprintf(csv, "mpi_ranks,omp_threads,b_schedule_type,b_schedule_chunk,dataset_file,global_packets,"
-                                 "seq_time,seq_throughput_mbs,seq_speedup,seq_efficiency,"
-                                 "a_time,a_throughput_mbs,a_speedup,a_efficiency,"
-                                 "b_time,b_throughput_mbs,b_speedup,b_efficiency\n");
-                }
-                // Append row containing exact metrics computed above
-                fprintf(csv, "%d,%u,%s,%u,%s,%u,"
-                             "%f,%f,%f,%f,"
-                             "%f,%f,%f,%f,"
-                             "%f,%f,%f,%f\n",
-                        num_ranks, config.num_omp_threads, config.schedule_type, config.schedule_chunk,
-                        config.dataset_file, config.packet_count,
-                        metrics_seq.exec_time, metrics_seq.throughput_mb_s, metrics_seq.speedup, metrics_seq.efficiency,
-                        metrics_a.exec_time, metrics_a.throughput_mb_s, metrics_a.speedup, metrics_a.efficiency,
-                        metrics_b.exec_time, metrics_b.throughput_mb_s, metrics_b.speedup, metrics_b.efficiency);
-                fclose(csv);
-                printf("Metrics appended to CSV logging sink: %s\n", config.output_file);
-            } else {
-                fprintf(stderr, "Error: Failed to write metrics to CSV destination path: %s\n", config.output_file);
-            }
-        }
+    
+    if (rank == 0 && run_all) {
+        print_comparison(&m_seq, &m_omp, &m_mpi, &m_hybrid);
     }
-
-    // Cleanup Local Allocations
-    for (uint32_t i = 0; i < num_packets_local; i++) {
-        free(local_packets[i].data);
-    }
+    
+    for (uint32_t i = 0; i < num_packets_local; i++) free(local_packets[i].data);
     free(local_packets);
-
     if (patterns) {
-        for (int i = 0; i < pattern_count; i++) {
-            free(patterns[i]);
-        }
+        for (int i = 0; i < pattern_count; i++) free(patterns[i]);
         free(patterns);
     }
-
-    // Clean up arrays dynamically allocated by the custom worker Bcast step
-    if (rank != 0) {
-        free(ac->states);
-        free(ac->output_next);
+    if (ac) {
+        if (rank != 0) { free(ac->states); free(ac->output_next); }
+        ac_free(ac);
     }
-    ac_free(ac);
-
-    MPI_Finalize();
+#ifdef HAVE_MPI
+    if (mpi_initialized) MPI_Finalize();
+#endif
     return 0;
 }

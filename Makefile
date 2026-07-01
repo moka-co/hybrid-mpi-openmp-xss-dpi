@@ -4,89 +4,96 @@ CFLAGS = -Wall -O3 -fopenmp -Isrc/ -DHAVE_MPI
 LDFLAGS = -fopenmp -lm
 
 # Source files
-CORE_SRC = src/pattern_matching.c src/dataset.c src/config.c
+CORE_SRC = src/pattern_matching.c src/dataset.c src/config.c src/performance.c
 MAIN_SRC = src/dpi_engine.c
+# Corrected: Binary names should not have .o extension
+MAIN_BIN = dpi_engine
 
-# Dataset used by the run* targets below. Override on the command line to
-# swap datasets without touching the Makefile, e.g.:
-#   make run24 DATASET=datasets/csic_get_post.txt
+# Dataset used by the run* targets below.
 DATASET = datasets/packets.txt
+PATTERNS = datasets/patterns.txt
 
 # Number of threads for multithreaded benchmarks
 NUM_THREADS = 4
 NUM_PROCESS = 2
 
-# Targets
-MAIN_BIN     = dpi_engine.o
-TEST_BIN_1   = tests/test_ac.o
-TEST_BIN_2   = tests/test_ac_file.o
-TEST_CONFIG  = tests/test_config.o
-BENCH_BIN    = tests/benchmarks/benchmark_ac.o
-BENCH_BIN_T  = tests/benchmarks/benchmark_ac_t.o
-BENCH_BIN_P  = tests/benchmarks/benchmark_ac_p.o
-BENCH_BIN_PT = tests/benchmarks/benchmark_ac_pt.o
-VALIDATE_BIN = tests/validate_dataset.o
-CSIC_BIN     = tests/generate_csic_dataset.o
+# Run configuration variables
+STRATEGY = all
+THREADS = 4
+SCHEDULE = dynamic,16
+NP = 2
+
+# Corrected: Binary names
+TEST_BIN_1   = tests/test_ac
+TEST_BIN_2   = tests/test_ac_file
+TEST_CONFIG  = tests/test_config
+BENCH_BIN    = tests/benchmarks/benchmark_ac
+BENCH_BIN_T  = tests/benchmarks/benchmark_ac_t
+BENCH_BIN_P  = tests/benchmarks/benchmark_ac_p
+BENCH_BIN_PT = tests/benchmarks/benchmark_ac_pt
+VALIDATE_BIN = tests/validate_dataset
+CSIC_BIN     = tests/generate_csic_dataset
 
 .PHONY: all clean test test_basic test_file test_config benchmark benchmark_t benchmark_p benchmark_pt validate csic_dataset run
 
 all: $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
 
-# Build the main DPI hybrid engine
+# Build rules
 $(MAIN_BIN): $(MAIN_SRC) $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the basic unit test
 $(TEST_BIN_1): tests/test_ac.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the file-based capacity test
 $(TEST_BIN_2): tests/test_ac_file.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the configuration and CLI parser unit test
 $(TEST_CONFIG): tests/test_config.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the performance benchmark
 $(BENCH_BIN): tests/benchmarks/benchmark_ac.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the multithreaded performance benchmark
 $(BENCH_BIN_T): tests/benchmarks/benchmark_ac_t.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the MPI performance benchmark
 $(BENCH_BIN_P): tests/benchmarks/benchmark_ac_p.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the hybrid MPI+OpenMP performance benchmark
 $(BENCH_BIN_PT): tests/benchmarks/benchmark_ac_pt.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the dataset validation program
 $(VALIDATE_BIN): tests/validate_dataset.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build the real-data (CSIC 2010) dataset validation program
 $(CSIC_BIN): tests/generate_csic_dataset.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Run the engine using the generated dataset layout
-# Override the dataset with: make run24 DATASET=datasets/other.bin
+
+# Run the engine
+run: $(MAIN_BIN)
+	@echo "Launching DPI engine..."
+	mpirun -np $(NP) ./$(MAIN_BIN) \
+		--strategy $(STRATEGY) \
+		--omp-threads $(THREADS) \
+		--schedule $(SCHEDULE) \
+		--pattern-file $(PATTERNS) \
+		--dataset-file $(DATASET)
+
+
 run24: $(MAIN_BIN)
 	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 4 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
+	mpirun -np 2 ./$(MAIN_BIN) --strategy hybrid --omp-threads 4 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
 
 run28: $(MAIN_BIN)
 	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 8 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
+	mpirun -np 2 ./$(MAIN_BIN) --strategy hybrid --omp-threads 8 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
 
 run42: $(MAIN_BIN)
 	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 3 ./$(MAIN_BIN) --omp-threads 2 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
+	mpirun -np 3 ./$(MAIN_BIN) --strategy hybrid --omp-threads 2 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
 
-# Run specific tests or all of them
+# Test targets
 test: test_basic test_file test_config
 
 test_basic: $(TEST_BIN_1)
@@ -101,6 +108,7 @@ test_config: $(TEST_CONFIG)
 	@echo "Running configuration suite unit tests..."
 	./$(TEST_CONFIG)
 
+# Benchmark targets
 benchmark: $(BENCH_BIN)
 	@echo "Running performance benchmark..."
 	./$(BENCH_BIN)
@@ -122,11 +130,10 @@ validate: $(VALIDATE_BIN)
 	@echo "Running dataset validation program..."
 	./$(VALIDATE_BIN)
 
-# Usage: make csic_dataset ARGS="datasets-private/csic_get_post.txt"
 csic_dataset: $(CSIC_BIN)
 	@echo "Running CSIC 2010 real-data validation..."
 	./$(CSIC_BIN) $(ARGS)
 
 clean:
 	rm -f $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
-	rm -f *.o src/*.o tests/*.o tests/benchmarks/*.o
+	rm -f src/*.o tests/*.o tests/benchmarks/*.o
