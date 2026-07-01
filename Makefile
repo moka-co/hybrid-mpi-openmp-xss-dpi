@@ -7,6 +7,11 @@ LDFLAGS = -fopenmp -lm
 CORE_SRC = src/pattern_matching.c src/dataset.c src/config.c
 MAIN_SRC = src/dpi_engine.c
 
+# Dataset used by the run* targets below. Override on the command line to
+# swap datasets without touching the Makefile, e.g.:
+#   make run24 DATASET=datasets/csic_get_post.bin
+DATASET = datasets/packets.bin
+
 # Targets
 MAIN_BIN     = dpi_engine.o
 TEST_BIN_1   = tests/test_ac.o
@@ -49,17 +54,18 @@ $(CSIC_BIN): tests/generate_csic_dataset.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Run the engine using the generated dataset layout
+# Override the dataset with: make run24 DATASET=datasets/other.bin
 run24: $(MAIN_BIN)
 	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 4 --schedule dynamic,16 --pattern-file datasets/patterns.txt
+	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 4 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
 
 run28: $(MAIN_BIN)
 	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 8 --schedule dynamic,16 --pattern-file datasets/patterns.txt
+	mpirun -np 2 ./$(MAIN_BIN) --omp-threads 8 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
 
 run42: $(MAIN_BIN)
 	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 3 ./$(MAIN_BIN) --omp-threads 2 --schedule dynamic,16 --pattern-file datasets/patterns.txt
+	mpirun -np 3 ./$(MAIN_BIN) --omp-threads 2 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
 
 # Run specific tests or all of them
 test: test_basic test_file test_config

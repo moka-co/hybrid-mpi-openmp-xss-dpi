@@ -46,7 +46,7 @@ static int load_patterns_from_file(const char *filename, char ***patterns_out) {
     return count;
 }
 
-// Reads the actual datasets/packets.bin file and distributes shards to MPI ranks
+// Reads the actual binary packet dataset file and distributes shards to MPI ranks
 void load_binary_dataset_shard(const char *filename, int rank, int num_ranks, Packet **packets, uint32_t *local_count) {
     FILE *f = fopen(filename, "rb");
     if (!f) {
@@ -131,11 +131,6 @@ int main(int argc, char *argv[]) {
     omp_set_schedule(selected_sched, (int)config.schedule_chunk);
     #endif
 
-<<<<<<< Updated upstream
-    // 3. Load Pattern Signatures & Build Aho-Corasick Automaton locally on all ranks
-=======
-    printf("Building the Automaton...\n");
->>>>>>> Stashed changes
     char **patterns = NULL;
     int pattern_count = load_patterns_from_file(config.pattern_file, &patterns);
     if (pattern_count < 0) {
@@ -153,15 +148,9 @@ int main(int argc, char *argv[]) {
 
     config.num_patterns = (uint32_t)pattern_count;
 
-<<<<<<< Updated upstream
-    // 4. Shard Loading from the real generated binary packet file
-=======
-    Printf("Automaton Build!\n");
-
->>>>>>> Stashed changes
     Packet *local_packets = NULL;
     uint32_t num_packets_local = 0;
-    load_binary_dataset_shard("datasets/packets.bin", rank, num_ranks, &local_packets, &num_packets_local);
+    load_binary_dataset_shard(config.dataset_file, rank, num_ranks, &local_packets, &num_packets_local);
 
     uint32_t global_packet_total = 0;
     MPI_Allreduce(&num_packets_local, &global_packet_total, 1, MPI_UINT32_T, MPI_SUM, MPI_COMM_WORLD);
@@ -173,16 +162,14 @@ int main(int argc, char *argv[]) {
     long seq_matches = 0;
     long seq_bytes_scanned = 0;
 
-    ACMatchList seq_ml; 
-    ac_matchlist_init(&seq_ml, 16); //initialize with initial capacity 32
-
     MPI_Barrier(MPI_COMM_WORLD);
     double seq_start_time = MPI_Wtime();
 
     for (uint32_t i = 0; i < num_packets_local; i++) {
-        ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &seq_ml);
-        seq_matches += seq_ml.count;
+        ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
+        seq_matches += ml.count;
         seq_bytes_scanned += local_packets[i].len;
+        ac_free_matches(&ml);
     }
 
     double seq_end_time = MPI_Wtime();
@@ -197,19 +184,15 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     double a_start_time = MPI_Wtime();
 
-    #pragma omp parallel num_threads(config.num_omp_threads)
-    {
-        ACMatchList a_ml;
-        ac_matchlist_init(&a_ml, 16); // once per thread, not per packet
-
-        #pragma omp for schedule(static) reduction(+:a_matches, a_bytes_scanned)
-        for (uint32_t i = 0; i < num_packets_local; i++) {
-            ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &a_ml);
-            a_matches += a_ml.count;
-            a_bytes_scanned += local_packets[i].len;
-        }
-
-        ac_free_matches(&a_ml); // once per thread, at the end
+    #pragma omp parallel for \
+        schedule(static) \
+        num_threads(config.num_omp_threads) \
+        reduction(+:a_matches, a_bytes_scanned)
+    for (uint32_t i = 0; i < num_packets_local; i++) {
+        ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
+        a_matches += ml.count;
+        a_bytes_scanned += local_packets[i].len;
+        ac_free_matches(&ml);
     }
 
     double a_end_time = MPI_Wtime();
@@ -289,6 +272,7 @@ int main(int argc, char *argv[]) {
         printf("  Total MPI Ranks Active: %d\n", num_ranks);
         printf("  OMP Threads per Rank:   %u\n", config.num_omp_threads);
         printf("  Version B Schedule:     %s (Chunk: %u)\n", config.schedule_type, config.schedule_chunk);
+        printf("  Dataset File:           %s\n", config.dataset_file);
         printf("  Loaded Signatures Count:%u\n", config.num_patterns);
         printf("  Global Packets Scanned: %u\n\n", config.packet_count);
 
@@ -324,17 +308,18 @@ int main(int argc, char *argv[]) {
             if (csv) {
                 // Write CSV header if creating a new file
                 if (!file_exists) {
-                    fprintf(csv, "mpi_ranks,omp_threads,b_schedule_type,b_schedule_chunk,global_packets,"
+                    fprintf(csv, "mpi_ranks,omp_threads,b_schedule_type,b_schedule_chunk,dataset_file,global_packets,"
                                  "seq_time,seq_throughput_mbs,seq_speedup,seq_efficiency,"
                                  "a_time,a_throughput_mbs,a_speedup,a_efficiency,"
                                  "b_time,b_throughput_mbs,b_speedup,b_efficiency\n");
                 }
                 // Append row containing exact metrics computed above
-                fprintf(csv, "%d,%u,%s,%u,%u,"
+                fprintf(csv, "%d,%u,%s,%u,%s,%u,"
                              "%f,%f,%f,%f,"
                              "%f,%f,%f,%f,"
                              "%f,%f,%f,%f\n",
-                        num_ranks, config.num_omp_threads, config.schedule_type, config.schedule_chunk, config.packet_count,
+                        num_ranks, config.num_omp_threads, config.schedule_type, config.schedule_chunk,
+                        config.dataset_file, config.packet_count,
                         metrics_seq.exec_time, metrics_seq.throughput_mb_s, metrics_seq.speedup, metrics_seq.efficiency,
                         metrics_a.exec_time, metrics_a.throughput_mb_s, metrics_a.speedup, metrics_a.efficiency,
                         metrics_b.exec_time, metrics_b.throughput_mb_s, metrics_b.speedup, metrics_b.efficiency);
