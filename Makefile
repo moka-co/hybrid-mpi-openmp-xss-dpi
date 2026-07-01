@@ -9,8 +9,8 @@ MAIN_SRC = src/dpi_engine.c
 
 # Dataset used by the run* targets below. Override on the command line to
 # swap datasets without touching the Makefile, e.g.:
-#   make run24 DATASET=datasets/csic_get_post.bin
-DATASET = datasets/packets.bin
+#   make run24 DATASET=datasets/csic_get_post.txt
+DATASET = datasets/packets.txt
 
 # Targets
 MAIN_BIN     = dpi_engine.o
