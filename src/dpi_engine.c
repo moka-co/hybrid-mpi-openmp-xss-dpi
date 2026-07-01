@@ -111,8 +111,6 @@ int main(int argc, char *argv[]) {
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
             exit(EXIT_FAILURE);
         }
-        print_config(&config);
-
         capture_metadata(&metadata);
         printf("\n=== Metadata Environment Verification ===\n");
         printf("Host: %s | GCC: %s | MPI: %s | Kernel: %s\n\n",
@@ -132,21 +130,91 @@ int main(int argc, char *argv[]) {
     #endif
 
     char **patterns = NULL;
-    int pattern_count = load_patterns_from_file(config.pattern_file, &patterns);
-    if (pattern_count < 0) {
-        fprintf(stderr, "[Rank %d] Error: Failed to open or read pattern file: %s\n", rank, config.pattern_file);
-        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-        exit(EXIT_FAILURE);
+    int pattern_count = 0;
+    ACAutomaton *ac = NULL;
+
+    // Start tracking the duration of the automaton generation and scattering phase
+    double aut_start_time = MPI_Wtime();
+
+    if (rank == 0) {
+        pattern_count = load_patterns_from_file(config.pattern_file, &patterns);
+        if (pattern_count < 0) {
+            fprintf(stderr, "[Rank %d] Error: Failed to open or read pattern file: %s\n", rank, config.pattern_file);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            exit(EXIT_FAILURE);
+        }
+
+        ac = ac_build((const char **)patterns, pattern_count);
+        if (!ac) {
+            fprintf(stderr, "[Rank %d] Error: Failed to construct Aho-Corasick automaton\n", rank);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            exit(EXIT_FAILURE);
+        }
+        config.num_patterns = (uint32_t)pattern_count;
     }
 
-    ACAutomaton *ac = ac_build((const char **)patterns, pattern_count);
-    if (!ac) {
-        fprintf(stderr, "[Rank %d] Error: Failed to construct Aho-Corasick automaton\n", rank);
-        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-        exit(EXIT_FAILURE);
+    // Extract structure properties from rank 0 to distribute to the cluster
+    int num_states = 0;
+    int capacity = 0;
+    if (rank == 0) {
+        num_states = ac->num_states;
+        capacity = ac->capacity;
     }
 
-    config.num_patterns = (uint32_t)pattern_count;
+    MPI_Bcast(&pattern_count, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&num_states, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&capacity, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Allocate and rebuild automaton containers on non-zero worker ranks
+    if (rank != 0) {
+        config.num_patterns = (uint32_t)pattern_count;
+        ac = (ACAutomaton *)malloc(sizeof(ACAutomaton));
+        if (!ac) {
+            fprintf(stderr, "[Rank %d] Error: Failed to allocate memory for automaton container\n", rank);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            exit(EXIT_FAILURE);
+        }
+        ac->num_states = num_states;
+        ac->capacity = capacity;
+        ac->num_patterns = pattern_count;
+        ac->patterns = NULL; // Worker ranks do not need raw string pointers for matching
+        ac->states = (ACState *)malloc(sizeof(ACState) * capacity);
+        ac->output_next = (int *)malloc(sizeof(int) * capacity);
+        if (!ac->states || !ac->output_next) {
+            fprintf(stderr, "[Rank %d] Error: Failed to allocate automaton internal state buffers\n", rank);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // Prevents signed 32-bit integer overflow for large structures
+    const size_t MAX_MPI_CHUNK_SIZE = 512 * 1024 * 1024; // 512 MB safe blocks
+
+    // 1. Broadcast the flat state array
+    size_t states_bytes_left = (size_t)capacity * sizeof(ACState);
+    size_t states_offset = 0;
+    while (states_bytes_left > 0) {
+        int chunk = (states_bytes_left > MAX_MPI_CHUNK_SIZE) ? (int)MAX_MPI_CHUNK_SIZE : (int)states_bytes_left;
+        MPI_Bcast((char *)ac->states + states_offset, chunk, MPI_BYTE, 0, MPI_COMM_WORLD);
+        states_offset += chunk;
+        states_bytes_left -= chunk;
+    }
+
+    // 2. Broadcast the parallel output chains array
+    size_t output_bytes_left = (size_t)capacity * sizeof(int);
+    size_t output_offset = 0;
+    while (output_bytes_left > 0) {
+        int chunk = (output_bytes_left > MAX_MPI_CHUNK_SIZE) ? (int)MAX_MPI_CHUNK_SIZE : (int)output_bytes_left;
+        MPI_Bcast((char *)ac->output_next + output_offset, chunk, MPI_BYTE, 0, MPI_COMM_WORLD);
+        output_offset += chunk;
+        output_bytes_left -= chunk;
+    }
+
+    double aut_end_time = MPI_Wtime();
+    if (rank == 0) {
+        printf("=== Automaton Setup Timing ===\n");
+        printf("  Time spent building and distributing automaton: %f seconds\n\n", aut_end_time - aut_start_time);
+    }
 
     Packet *local_packets = NULL;
     uint32_t num_packets_local = 0;
@@ -155,6 +223,20 @@ int main(int argc, char *argv[]) {
     uint32_t global_packet_total = 0;
     MPI_Allreduce(&num_packets_local, &global_packet_total, 1, MPI_UINT32_T, MPI_SUM, MPI_COMM_WORLD);
     config.packet_count = global_packet_total;
+
+    // Accumulate local buffer size lengths and aggregate globally to update dataset_size
+    uint64_t local_bytes_total = 0;
+    for (uint32_t i = 0; i < num_packets_local; i++) {
+        local_bytes_total += local_packets[i].len;
+    }
+    uint64_t global_bytes_total = 0;
+    MPI_Allreduce(&local_bytes_total, &global_bytes_total, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+    config.dataset_size = global_bytes_total;
+    
+
+    if (rank == 0){
+        print_config(&config);
+    }
 
     // ==========================================
     // PATH 1: Pure Sequential Baseline
@@ -165,12 +247,16 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     double seq_start_time = MPI_Wtime();
 
+    // Reusable match list allocated exactly once for the sequential path
+    ACMatchList seq_ml;
+    ac_matchlist_init(&seq_ml, 64);
+
     for (uint32_t i = 0; i < num_packets_local; i++) {
-        ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
-        seq_matches += ml.count;
+        ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &seq_ml);
+        seq_matches += seq_ml.count;
         seq_bytes_scanned += local_packets[i].len;
-        ac_free_matches(&ml);
     }
+    ac_free_matches(&seq_ml);
 
     double seq_end_time = MPI_Wtime();
     double seq_local_elapsed = seq_end_time - seq_start_time;
@@ -184,15 +270,21 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     double a_start_time = MPI_Wtime();
 
-    #pragma omp parallel for \
-        schedule(static) \
+    // Combined parallel region ensures memory allocations occur once per thread worker
+    #pragma omp parallel \
         num_threads(config.num_omp_threads) \
         reduction(+:a_matches, a_bytes_scanned)
-    for (uint32_t i = 0; i < num_packets_local; i++) {
-        ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
-        a_matches += ml.count;
-        a_bytes_scanned += local_packets[i].len;
-        ac_free_matches(&ml);
+    {
+        ACMatchList a_ml;
+        ac_matchlist_init(&a_ml, 64);
+
+        #pragma omp for schedule(static)
+        for (uint32_t i = 0; i < num_packets_local; i++) {
+            ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &a_ml);
+            a_matches += a_ml.count;
+            a_bytes_scanned += local_packets[i].len;
+        }
+        ac_free_matches(&a_ml);
     }
 
     double a_end_time = MPI_Wtime();
@@ -207,15 +299,21 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     double b_start_time = MPI_Wtime();
 
-    #pragma omp parallel for \
-        schedule(runtime) \
+    // Combined parallel region ensures memory allocations occur once per thread worker
+    #pragma omp parallel \
         num_threads(config.num_omp_threads) \
         reduction(+:b_matches, b_bytes_scanned)
-    for (uint32_t i = 0; i < num_packets_local; i++) {
-        ACMatchList ml = ac_scan(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len);
-        b_matches += ml.count;
-        b_bytes_scanned += local_packets[i].len;
-        ac_free_matches(&ml);
+    {
+        ACMatchList b_ml;
+        ac_matchlist_init(&b_ml, 64);
+
+        #pragma omp for schedule(runtime)
+        for (uint32_t i = 0; i < num_packets_local; i++) {
+            ac_scan_into(ac, (const uint8_t *)local_packets[i].data, local_packets[i].len, &b_ml);
+            b_matches += b_ml.count;
+            b_bytes_scanned += local_packets[i].len;
+        }
+        ac_free_matches(&b_ml);
     }
 
     double b_end_time = MPI_Wtime();
@@ -337,10 +435,18 @@ int main(int argc, char *argv[]) {
     }
     free(local_packets);
 
-    for (int i = 0; i < pattern_count; i++) {
-        free(patterns[i]);
+    if (patterns) {
+        for (int i = 0; i < pattern_count; i++) {
+            free(patterns[i]);
+        }
+        free(patterns);
     }
-    free(patterns);
+
+    // Clean up arrays dynamically allocated by the custom worker Bcast step
+    if (rank != 0) {
+        free(ac->states);
+        free(ac->output_next);
+    }
     ac_free(ac);
 
     MPI_Finalize();
