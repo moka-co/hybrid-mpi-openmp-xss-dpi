@@ -12,18 +12,24 @@ MAIN_SRC = src/dpi_engine.c
 #   make run24 DATASET=datasets/csic_get_post.txt
 DATASET = datasets/packets.txt
 
+# Number of threads for multithreaded benchmarks
+NUM_THREADS = 4
+NUM_PROCESS = 2
+
 # Targets
 MAIN_BIN     = dpi_engine.o
 TEST_BIN_1   = tests/test_ac.o
 TEST_BIN_2   = tests/test_ac_file.o
 TEST_CONFIG  = tests/test_config.o
 BENCH_BIN    = tests/benchmarks/benchmark_ac.o
+BENCH_BIN_T  = tests/benchmarks/benchmark_ac_t.o
+BENCH_BIN_P  = tests/benchmarks/benchmark_ac_p.o
 VALIDATE_BIN = tests/validate_dataset.o
 CSIC_BIN     = tests/generate_csic_dataset.o
 
-.PHONY: all clean test test_basic test_file test_config benchmark validate csic_dataset run
+.PHONY: all clean test test_basic test_file test_config benchmark benchmark_t benchmark_p validate csic_dataset run
 
-all: $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(VALIDATE_BIN) $(CSIC_BIN)
+all: $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(VALIDATE_BIN) $(CSIC_BIN)
 
 # Build the main DPI hybrid engine
 $(MAIN_BIN): $(MAIN_SRC) $(CORE_SRC)
@@ -43,6 +49,14 @@ $(TEST_CONFIG): tests/test_config.c $(CORE_SRC)
 
 # Build the performance benchmark
 $(BENCH_BIN): tests/benchmarks/benchmark_ac.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Build the multithreaded performance benchmark
+$(BENCH_BIN_T): tests/benchmarks/benchmark_ac_t.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Build the MPI performance benchmark
+$(BENCH_BIN_P): tests/benchmarks/benchmark_ac_p.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Build the dataset validation program
@@ -86,6 +100,14 @@ benchmark: $(BENCH_BIN)
 	@echo "Running performance benchmark..."
 	./$(BENCH_BIN)
 
+benchmark_t: $(BENCH_BIN_T)
+	@echo "Running multithreaded performance benchmark with $(NUM_THREADS) threads..."
+	OMP_NUM_THREADS=$(NUM_THREADS) ./$(BENCH_BIN_T)
+
+benchmark_p: $(BENCH_BIN_P)
+	@echo "Running MPI performance benchmark..."
+	mpirun -np $(NUM_PROCESS) ./$(BENCH_BIN_P)
+
 validate: $(VALIDATE_BIN)
 	@echo "Running dataset validation program..."
 	./$(VALIDATE_BIN)
@@ -96,5 +118,5 @@ csic_dataset: $(CSIC_BIN)
 	./$(CSIC_BIN) $(ARGS)
 
 clean:
-	rm -f $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(VALIDATE_BIN) $(CSIC_BIN)
+	rm -f $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(VALIDATE_BIN) $(CSIC_BIN)
 	rm -f *.o src/*.o tests/*.o tests/benchmarks/*.o
