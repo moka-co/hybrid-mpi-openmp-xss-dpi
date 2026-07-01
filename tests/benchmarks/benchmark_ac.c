@@ -162,64 +162,51 @@ int main(int argc, char *argv[])
     printf("  Total matches found: %lu\n\n", total_matches);
 
     // Compute metrics
-    printf("Performance Metrics\n");
-    printf("  ================================\n");
-
     double throughput_mb_per_sec = (double)total_bytes / 1e6 / scan_time;
-    printf("  Throughput:        %.2f MB/s\n", throughput_mb_per_sec);
-
     double packets_per_sec = (double)num_packets / scan_time;
-    printf("  Packets/sec:       %.0f\n", packets_per_sec);
-
-    double bytes_per_pattern_sec = (double)total_bytes / (double)num_patterns / scan_time;
-    printf("  Bytes/(pattern*sec): %.0f\n", bytes_per_pattern_sec);
-
     double avg_time_per_packet_us = (scan_time / num_packets) * 1e6;
-    printf("  Avg time/packet:   %.3f µs\n", avg_time_per_packet_us);
-
     double avg_time_per_byte_ns = (scan_time / total_bytes) * 1e9;
-    printf("  Avg time/byte:     %.2f ns\n", avg_time_per_byte_ns);
 
-    printf("  ================================\n\n");
+    // Generate JSON
+    char json_buffer[4096];
+    int len = snprintf(json_buffer, sizeof(json_buffer),
+        "{\n"
+        "  \"Configuration\": {\n"
+        "    \"patterns_count\": %d,\n"
+        "    \"automaton_states\": %d,\n"
+        "    \"test_packets\": %d,\n"
+        "    \"total_data_scanned_mb\": %.2f,\n"
+        "    \"avg_packet_size\": %.1f,\n"
+        "    \"processes\": 1,\n"
+        "    \"threads\": 1\n"
+        "  },\n"
+        "  \"Results\": {\n"
+        "    \"scan_time_sec\": %.6f,\n"
+        "    \"total_matches\": %lu,\n"
+        "    \"throughput_mb_s\": %.2f,\n"
+        "    \"packets_per_sec\": %.0f,\n"
+        "    \"avg_time_per_packet_us\": %.3f,\n"
+        "    \"avg_time_per_byte_ns\": %.2f\n"
+        "  },\n"
+        "  \"BottleneckNotes\": {\n"
+        "    \"automaton_states\": %d,\n"
+        "    \"bytes_scanned_per_state\": %.0f,\n"
+        "    \"ac_state_struct_size_bytes\": %zu,\n"
+        "    \"goto_table_size_bytes\": %zu\n"
+        "  }\n"
+        "}",
+        num_patterns, ac->num_states, num_packets, (double)total_bytes / 1e6, (double)total_bytes / num_packets,
+        scan_time, total_matches, throughput_mb_per_sec, packets_per_sec, avg_time_per_packet_us, avg_time_per_byte_ns,
+        ac->num_states, (double)total_bytes / ac->num_states, sizeof(ACState), AC_ALPHABET_SIZE * sizeof(int));
 
-    // Bottleneck analysis
-    printf("Bottleneck Analysis\n");
-    printf("  ================================\n");
-    printf("  Total automaton states: %d\n", ac->num_states);
-    printf("  Bytes scanned per state: %.0f\n",
-           (double)total_bytes / ac->num_states);
-    printf("\n  L1 cache line size typical: 64 bytes\n");
-    printf("  ACState struct size: %zu bytes\n", sizeof(ACState));
-    printf("  goto_table[] size: %zu bytes\n", AC_ALPHABET_SIZE * sizeof(int));
-    printf("  (Each state's goto_table, may cause cache misses)\n");
-    printf("  ================================\n\n");
+    // Print to stdout
+    printf("%s\n", json_buffer);
 
-    // Output summary to file
-    printf("Saving results to baseline_benchmark.txt...\n");
-    FILE *f = fopen("baseline_benchmark.txt", "w");
+    // Save to file
+    FILE *f = fopen("results/benchmark_ac.json", "w");
     if (f) {
-        fprintf(f, "=== Pattern Matching Baseline Performance Report ===\n\n");
-        fprintf(f, "Configuration:\n");
-        fprintf(f, "  Patterns:              %d\n", num_patterns);
-        fprintf(f, "  Automaton states:      %d\n", ac->num_states);
-        fprintf(f, "  Test packets:          %d\n", num_packets);
-        fprintf(f, "  Total data scanned:    %.2f MB\n", (double)total_bytes / 1e6);
-        fprintf(f, "  Avg packet size:       %.1f bytes\n", (double)total_bytes / num_packets);
-        fprintf(f, "\nResults:\n");
-        fprintf(f, "  Scan time:             %.6f sec\n", scan_time);
-        fprintf(f, "  Total matches:         %lu\n", total_matches);
-        fprintf(f, "  Throughput:            %.2f MB/s\n", throughput_mb_per_sec);
-        fprintf(f, "  Packets/sec:           %.0f\n", packets_per_sec);
-        fprintf(f, "  Avg time/packet:       %.3f µs\n", avg_time_per_packet_us);
-        fprintf(f, "  Avg time/byte:         %.2f ns\n", avg_time_per_byte_ns);
-        fprintf(f, "\nBottleneck Notes:\n");
-        fprintf(f, "  - Each state has a lookup table\n");
-        fprintf(f, "  - Total automaton size: ~%zu KB\n", ac->num_states * sizeof(ACState) / 1024);
-        fprintf(f, "  - Inner loop: single table lookup per byte\n");
-        fprintf(f, "  - If throughput is low, likely L1 cache misses\n");
-        fprintf(f, "  - If throughput is high, tight loop and prefetching work well\n");
+        fprintf(f, "%s\n", json_buffer);
         fclose(f);
-        printf("  Done.\n\n");
     }
 
     // Cleanup

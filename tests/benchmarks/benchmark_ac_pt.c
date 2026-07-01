@@ -192,7 +192,7 @@ int main(int argc, char *argv[])
 
         // Save to file
         char filename[64];
-        snprintf(filename, sizeof(filename), "results/benchmark_ac_pt%d_%d.json", size, num_threads);
+        snprintf(filename, sizeof(filename), "results/benchmark_ac_p%d_t%d.json", size, num_threads);
         FILE *f = fopen(filename, "w");
         if (f) {
             fprintf(f, "%s\n", json_buffer);
