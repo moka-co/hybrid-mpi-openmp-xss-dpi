@@ -24,12 +24,13 @@ TEST_CONFIG  = tests/test_config.o
 BENCH_BIN    = tests/benchmarks/benchmark_ac.o
 BENCH_BIN_T  = tests/benchmarks/benchmark_ac_t.o
 BENCH_BIN_P  = tests/benchmarks/benchmark_ac_p.o
+BENCH_BIN_PT = tests/benchmarks/benchmark_ac_pt.o
 VALIDATE_BIN = tests/validate_dataset.o
 CSIC_BIN     = tests/generate_csic_dataset.o
 
-.PHONY: all clean test test_basic test_file test_config benchmark benchmark_t benchmark_p validate csic_dataset run
+.PHONY: all clean test test_basic test_file test_config benchmark benchmark_t benchmark_p benchmark_pt validate csic_dataset run
 
-all: $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(VALIDATE_BIN) $(CSIC_BIN)
+all: $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
 
 # Build the main DPI hybrid engine
 $(MAIN_BIN): $(MAIN_SRC) $(CORE_SRC)
@@ -57,6 +58,10 @@ $(BENCH_BIN_T): tests/benchmarks/benchmark_ac_t.c $(CORE_SRC)
 
 # Build the MPI performance benchmark
 $(BENCH_BIN_P): tests/benchmarks/benchmark_ac_p.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Build the hybrid MPI+OpenMP performance benchmark
+$(BENCH_BIN_PT): tests/benchmarks/benchmark_ac_pt.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Build the dataset validation program
@@ -108,6 +113,11 @@ benchmark_p: $(BENCH_BIN_P)
 	@echo "Running MPI performance benchmark..."
 	mpirun -np $(NUM_PROCESS) ./$(BENCH_BIN_P)
 
+benchmark_pt: $(BENCH_BIN_PT)
+	@echo "Running Hybrid MPI+OpenMP performance benchmark with $(NUM_PROCESS) processes and $(NUM_THREADS) threads per rank..."
+	mpirun -np $(NUM_PROCESS) -x OMP_NUM_THREADS=$(NUM_THREADS) ./$(BENCH_BIN_PT)
+
+
 validate: $(VALIDATE_BIN)
 	@echo "Running dataset validation program..."
 	./$(VALIDATE_BIN)
@@ -118,5 +128,5 @@ csic_dataset: $(CSIC_BIN)
 	./$(CSIC_BIN) $(ARGS)
 
 clean:
-	rm -f $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(VALIDATE_BIN) $(CSIC_BIN)
+	rm -f $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
 	rm -f *.o src/*.o tests/*.o tests/benchmarks/*.o
