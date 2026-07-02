@@ -19,6 +19,9 @@ def run_cmd(cmd):
     subprocess.run(cmd, check=True)
 
 def main():
+    # Set the working directory to the current shell location
+    os.chdir(os.getcwd())
+
     # Ensure project is compiled
     run_cmd(["make"])
 
@@ -34,20 +37,19 @@ def main():
         # Assuming the benchmark_ac_t binary might need an env var for threads
         # or we just rely on OMP_NUM_THREADS
         env = os.environ.copy()
-        env["OMP_NUM_THREADS"] = str(t)
+        os.environ["OMP_NUM_THREADS"] = str(t)
         subprocess.run(["./tests/benchmarks/benchmark_ac_t"], env=env, check=True)
 
     # 3. Multiprocess
     for p in PROCESSES:
         seed = BASE_SEED + p * 100
-        run_cmd(["mpirun", "-np", str(p), "./tests/benchmarks/benchmark_ac_p"])
+        run_cmd(["mpirun", "--allow-run-as-root", "-np", str(p), "./tests/benchmarks/benchmark_ac_p"])
 
     # 4. Multiprocess + Multithread
     for p, t in HYBRID_CONFIGS:
         seed = BASE_SEED + p * 100 + t * 10
-        env = os.environ.copy()
-        env["OMP_NUM_THREADS"] = str(t)
-        run_cmd(["mpirun", "-np", str(p), "./tests/benchmarks/benchmark_ac_pt"])
+        os.environ['OMP_NUM_THREADS'] = str(t)
+        run_cmd(["mpirun", "--allow-run-as-root", "-np", str(p), "./tests/benchmarks/benchmark_ac_pt"])
 
 if __name__ == "__main__":
     main()
