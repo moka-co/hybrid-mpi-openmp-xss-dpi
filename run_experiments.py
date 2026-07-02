@@ -19,6 +19,9 @@ def run_cmd(cmd):
     subprocess.run(cmd, check=True)
 
 def main():
+    # Ensure project is compiled
+    run_cmd(["make"])
+
     if not os.path.exists("results"):
         os.makedirs("results")
 
