@@ -291,3 +291,38 @@ void ac_free(ACAutomaton *ac)
     }
     free(ac);
 }
+
+void ac_matchlist_init(ACMatchList *ml, int initial_capacity)
+{
+    if (initial_capacity <= 0) initial_capacity = 16;
+    ml->count    = 0;
+    ml->capacity = initial_capacity;
+    ml->matches  = (ACMatch *)malloc(initial_capacity * sizeof(ACMatch));
+    if (!ml->matches) ml->capacity = 0; // caller should check before use
+}
+
+void ac_scan_into(const ACAutomaton *ac, const uint8_t *data, size_t len, ACMatchList *ml)
+{
+    ml->count = 0; // reuse existing buffer — no malloc/free here
+
+    int cur = 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = data[i];
+        cur = ac->states[cur].goto_table[c];
+
+        int out = ac->states[cur].output;
+        while (out != -1) {
+            if (ml->count == ml->capacity) {
+                int new_capacity = (ml->capacity > 0) ? ml->capacity * 2 : 16;
+                ACMatch *tmp = (ACMatch *)realloc(ml->matches, new_capacity * sizeof(ACMatch));
+                if (!tmp) return; // keep whatever matches we already have
+                ml->matches  = tmp;
+                ml->capacity = new_capacity;
+            }
+            ml->matches[ml->count].pattern_id = out;
+            ml->matches[ml->count].offset     = (int)i;
+            ml->count++;
+            out = ac->output_next[out];
+        }
+    }
+}

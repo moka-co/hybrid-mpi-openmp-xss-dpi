@@ -185,8 +185,8 @@ int main(void)
 
     // --- Save to disk so later phases (and re-validation) can reload the
     //     exact same dataset without regenerating it ---
-    LOG("Saving dataset to packets.bin...\n");
-    if (save_packets_to_file("datasets/packets.bin", packets, NUM_PACKETS) != 0) {
+    LOG("Saving dataset to packets.txt...\n");
+    if (save_packets_to_file("datasets/packets.txt", packets, NUM_PACKETS) != 0) {
         LOG("  WARNING: Failed to save dataset to disk\n\n");
     } else {
         LOG("  Done.\n\n");

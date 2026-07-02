@@ -1,13 +1,14 @@
-// tests/benchmarks/benchmark_ac.c
-// Compile: gcc -O3 -Wall -Isrc/ -o tests/benchmarks/benchmark_ac tests/benchmarks/benchmark_ac.c src/pattern_matching.c
-// Run: ./tests/benchmarks/benchmark_ac
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include <omp.h>
 #include "../../src/pattern_matching.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 // Simple random number generator (seeded) for reproducibility
 static uint32_t rng_state = 42;
@@ -32,8 +33,6 @@ static uint8_t *gen_random_packet(size_t min_len, size_t max_len, size_t *out_le
 }
 
 // Get time in seconds (platform-dependent).
-// On Unix: uses clock_gettime.
-// On Windows: uses GetTickCount64 (rough approximation).
 static double get_time_sec(void)
 {
 #ifdef _WIN32
@@ -46,7 +45,6 @@ static double get_time_sec(void)
 }
 
 // Load patterns from a file (one pattern per line)
-// Grows the array dynamically as patterns are read, no upper bound needed.
 static char **load_patterns_from_file(const char *filepath, int *out_count)
 {
     FILE *fp = fopen(filepath, "r");
@@ -96,7 +94,7 @@ static char **load_patterns_from_file(const char *filepath, int *out_count)
 
 int main(int argc, char *argv[])
 {
-    printf("Pattern Matching Single-Threaded Performance Baseline\n\n");
+    printf("Pattern Matching Multithreaded Performance Baseline (OpenMP)\n\n");
 
     // Load patterns from file
     printf("Loading XSS patterns from file...\n");
@@ -144,14 +142,22 @@ int main(int argc, char *argv[])
            packet_lens[0], packet_lens[num_packets - 1]);
 
     // Scan all packets and time it
-    printf("Scanning packets (measuring time)...\n");
+    printf("Scanning packets with OpenMP (measuring time)...\n");
 
     double scan_start = get_time_sec();
     uint64_t total_matches = 0;
 
-    for (int i = 0; i < num_packets; i++) {
-        ACMatchList ml = ac_scan(ac, packets[i], packet_lens[i]);
-        total_matches += ml.count;
+    #pragma omp parallel
+    {
+        ACMatchList ml;
+        ac_matchlist_init(&ml, 16);
+
+        #pragma omp for reduction(+:total_matches)
+        for (int i = 0; i < num_packets; i++) {
+            ac_scan_into(ac, packets[i], packet_lens[i], &ml);
+            total_matches += ml.count;
+        }
+
         ac_free_matches(&ml);
     }
 
@@ -169,6 +175,7 @@ int main(int argc, char *argv[])
 
     // Generate JSON
     char json_buffer[4096];
+    int num_threads = omp_get_max_threads();
     int len = snprintf(json_buffer, sizeof(json_buffer),
         "{\n"
         "  \"Configuration\": {\n"
@@ -178,7 +185,7 @@ int main(int argc, char *argv[])
         "    \"total_data_scanned_mb\": %.2f,\n"
         "    \"avg_packet_size\": %.1f,\n"
         "    \"processes\": 1,\n"
-        "    \"threads\": 1\n"
+        "    \"threads\": %d\n"
         "  },\n"
         "  \"Results\": {\n"
         "    \"scan_time_sec\": %.6f,\n"
@@ -195,7 +202,7 @@ int main(int argc, char *argv[])
         "    \"goto_table_size_bytes\": %zu\n"
         "  }\n"
         "}",
-        num_patterns, ac->num_states, num_packets, (double)total_bytes / 1e6, (double)total_bytes / num_packets,
+        num_patterns, ac->num_states, num_packets, (double)total_bytes / 1e6, (double)total_bytes / num_packets, num_threads,
         scan_time, total_matches, throughput_mb_per_sec, packets_per_sec, avg_time_per_packet_us, avg_time_per_byte_ns,
         ac->num_states, (double)total_bytes / ac->num_states, sizeof(ACState), AC_ALPHABET_SIZE * sizeof(int));
 
@@ -203,7 +210,9 @@ int main(int argc, char *argv[])
     printf("%s\n", json_buffer);
 
     // Save to file
-    FILE *f = fopen("results/benchmark_ac.json", "w");
+    char filename[64];
+    snprintf(filename, sizeof(filename), "results/benchmark_ac_t%d.json", num_threads);
+    FILE *f = fopen(filename, "w");
     if (f) {
         fprintf(f, "%s\n", json_buffer);
         fclose(f);

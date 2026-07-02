@@ -82,4 +82,13 @@ void ac_free_matches(ACMatchList *ml);
  */
 void ac_free(ACAutomaton *ac);
 
+// Allocate a match list with a starting capacity. 
+// It is called once per thread, before the scanning loop
+void ac_matchlist_init(ACMatchList *ml, int initial_capacity);
+
+// Scan a packet, writing matches into a pre-allocated ACMatchList.
+// Resets ml->count to 0 internally, but does NOT free/realloc the underlying buffer unless it needs to grow.
+// It's thread safe under the same condition of ac_scan()
+void ac_scan_into(const ACAutomaton *ac, const uint8_t *data, size_t len, ACMatchList *ml);
+
 #endif

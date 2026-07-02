@@ -195,31 +195,20 @@ void free_packets(Packet *packets, int count)
 
 int save_packets_to_file(const char *filepath, const Packet *packets, int count)
 {
-    FILE *f = fopen(filepath, "wb");
+    FILE *f = fopen(filepath, "w"); // Text mode
     if (!f) {
         perror("save_packets_to_file: fopen");
         return -1;
     }
 
-    uint32_t magic = DATASET_MAGIC;
-    uint32_t cnt   = (uint32_t)count;
-
-    if (fwrite(&magic, sizeof(magic), 1, f) != 1 ||
-        fwrite(&cnt, sizeof(cnt), 1, f) != 1) {
-        fclose(f);
-        return -1;
-    }
-
     for (int i = 0; i < count; i++) {
-        uint32_t len     = (uint32_t)packets[i].len;
-        uint8_t  has_xss = (uint8_t)packets[i].has_xss;
-
-        if (fwrite(&len, sizeof(len), 1, f) != 1 ||
-            fwrite(&has_xss, sizeof(has_xss), 1, f) != 1 ||
-            fwrite(packets[i].data, 1, len, f) != len) {
+        // Format: has_xss|len|data
+        fprintf(f, "%d|%zu|", packets[i].has_xss, packets[i].len);
+        if (fwrite(packets[i].data, 1, packets[i].len, f) != packets[i].len) {
             fclose(f);
             return -1;
         }
+        fprintf(f, "\n");
     }
 
     fclose(f);
@@ -228,22 +217,19 @@ int save_packets_to_file(const char *filepath, const Packet *packets, int count)
 
 Packet *load_packets_from_file(const char *filepath, int *out_count)
 {
-    FILE *f = fopen(filepath, "rb");
+    FILE *f = fopen(filepath, "r"); // Text mode
     if (!f) {
         perror("load_packets_from_file: fopen");
         return NULL;
     }
 
-    uint32_t magic = 0, cnt = 0;
-    if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != DATASET_MAGIC) {
-        fprintf(stderr, "load_packets_from_file: bad magic number in %s\n", filepath);
-        fclose(f);
-        return NULL;
+    // First, count lines to know how many packets to allocate
+    int cnt = 0;
+    char ch;
+    while((ch = fgetc(f)) != EOF) {
+        if(ch == '\n') cnt++;
     }
-    if (fread(&cnt, sizeof(cnt), 1, f) != 1) {
-        fclose(f);
-        return NULL;
-    }
+    rewind(f);
 
     Packet *packets = (Packet *)malloc(cnt * sizeof(Packet));
     if (!packets) {
@@ -251,14 +237,12 @@ Packet *load_packets_from_file(const char *filepath, int *out_count)
         return NULL;
     }
 
-    for (uint32_t i = 0; i < cnt; i++) {
-        uint32_t len = 0;
-        uint8_t  has_xss = 0;
-
-        if (fread(&len, sizeof(len), 1, f) != 1 ||
-            fread(&has_xss, sizeof(has_xss), 1, f) != 1) {
-            // Roll back partially loaded packets.
-            for (uint32_t j = 0; j < i; j++) free(packets[j].data);
+    for (int i = 0; i < cnt; i++) {
+        int has_xss;
+        size_t len;
+        
+        if (fscanf(f, "%d|%zu|", &has_xss, &len) != 2) {
+            for (int j = 0; j < i; j++) free(packets[j].data);
             free(packets);
             fclose(f);
             return NULL;
@@ -267,11 +251,14 @@ Packet *load_packets_from_file(const char *filepath, int *out_count)
         uint8_t *data = (uint8_t *)malloc(len);
         if (!data || fread(data, 1, len, f) != len) {
             free(data);
-            for (uint32_t j = 0; j < i; j++) free(packets[j].data);
+            for (int j = 0; j < i; j++) free(packets[j].data);
             free(packets);
             fclose(f);
             return NULL;
         }
+        
+        // Consume the newline
+        fgetc(f); 
 
         packets[i].data    = data;
         packets[i].len     = len;
@@ -279,6 +266,6 @@ Packet *load_packets_from_file(const char *filepath, int *out_count)
     }
 
     fclose(f);
-    *out_count = (int)cnt;
+    *out_count = cnt;
     return packets;
 }
