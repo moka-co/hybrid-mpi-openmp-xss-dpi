@@ -3,6 +3,7 @@ datasets-private/
 *.bin 
 *.txt
 *.csv
+*.json
 
 # Prerequisites
 *.d
