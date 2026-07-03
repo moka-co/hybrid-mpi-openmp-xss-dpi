@@ -22,6 +22,7 @@ def main():
     os.chdir(os.getcwd())
 
     # Ensure project is compiled
+    run_cmd(["make clean"])
     run_cmd(["make"])
 
     if not os.path.exists("results"):
