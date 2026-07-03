@@ -51,55 +51,79 @@ def calculate_metrics(df):
     df['efficiency'] = df['speedup'] / (df['processes'] * df['threads'])
     return df
 
-def plot_speedup(df, output_dir):
+def plot_speedup(df, output_dir, scheduler):
+    scheduler_df = df[df['scheduler'] == scheduler]
+    if scheduler_df.empty:
+        return
     plt.figure(figsize=(10, 6))
     # Plotting speedup vs threads, colored by processes, faceted by mode
-    sns.lineplot(data=df, x='threads', y='speedup', hue='processes', style='mode', marker='o')
-    plt.title("Speedup by Thread Count (MPI vs. MPI+OMP) - Static Scheduler")
+    sns.lineplot(data=scheduler_df, x='threads', y='speedup', hue='processes', style='mode', marker='o')
+    plt.title(f"Speedup by Thread Count (MPI vs. MPI+OMP) - {scheduler.capitalize()} Scheduler")
     plt.xlabel("Number of OMP Threads")
     plt.ylabel("Speedup")
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'speedup_vs_threads.png'), dpi=300)
+    plt.savefig(os.path.join(output_dir, f'speedup_vs_threads_{scheduler}.png'), dpi=300)
     plt.close()
-    print("Saved speedup_vs_threads.png")
+    print(f"Saved speedup_vs_threads_{scheduler}.png")
 
-def plot_efficiency_vs_threads(df, output_dir):
+def plot_efficiency_vs_threads(df, output_dir, scheduler):
+    scheduler_df = df[df['scheduler'] == scheduler]
+    if scheduler_df.empty:
+        return
     plt.figure(figsize=(10, 6))
     # Plotting efficiency vs threads, colored by processes, faceted by mode
-    sns.lineplot(data=df, x='threads', y='efficiency', hue='processes', style='mode', marker='o')
-    plt.title("Efficiency by Thread Count (MPI vs. MPI+OMP) - Static Scheduler")
+    sns.lineplot(data=scheduler_df, x='threads', y='efficiency', hue='processes', style='mode', marker='o')
+    plt.title(f"Efficiency by Thread Count (MPI vs. MPI+OMP) - {scheduler.capitalize()} Scheduler")
     plt.xlabel("Number of OMP Threads")
     plt.ylabel("Efficiency")
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'efficiency_vs_threads.png'), dpi=300)
+    plt.savefig(os.path.join(output_dir, f'efficiency_vs_threads_{scheduler}.png'), dpi=300)
     plt.close()
-    print("Saved efficiency_vs_threads.png")
+    print(f"Saved efficiency_vs_threads_{scheduler}.png")
 
-def plot_heatmaps(df, output_dir):
-    # Efficiency heatmap
-    pivot_throughput = df.pivot_table(index='processes', columns='threads', values='throughput_mb_s', aggfunc='mean')
+def plot_heatmaps(df, output_dir, scheduler):
+    scheduler_df = df[df['scheduler'] == scheduler]
+    if scheduler_df.empty:
+        return
+    # Throughput heatmap
+    pivot_throughput = scheduler_df.pivot_table(index='processes', columns='threads', values='throughput_mb_s', aggfunc='mean')
     
     plt.figure(figsize=(8, 6))
     sns.heatmap(pivot_throughput, annot=True, cmap='viridis', fmt='.1f')
-    plt.title("Throughput Heatmap (MB/s) - Static Scheduler")
-    plt.savefig(os.path.join(output_dir, 'throughput_heatmap.png'), dpi=300)
+    plt.title(f"Throughput Heatmap (MB/s) - {scheduler.capitalize()} Scheduler")
+    plt.savefig(os.path.join(output_dir, f'throughput_heatmap_{scheduler}.png'), dpi=300)
     plt.close()
-    print("Saved throughput_heatmap.png")
+    print(f"Saved throughput_heatmap_{scheduler}.png")
     
     # Speedup heatmap
     plt.figure(figsize=(10, 6))
-    sns.heatmap(df.pivot_table(index='processes', columns='threads', values='speedup'), annot=True, cmap='coolwarm', fmt='.2f')
-    plt.title("Speedup Heatmap - Static Scheduler")
-    plt.savefig(os.path.join(output_dir, 'speedup_heatmap.png'), dpi=300)
+    sns.heatmap(scheduler_df.pivot_table(index='processes', columns='threads', values='speedup'), annot=True, cmap='coolwarm', fmt='.2f')
+    plt.title(f"Speedup Heatmap - {scheduler.capitalize()} Scheduler")
+    plt.savefig(os.path.join(output_dir, f'speedup_heatmap_{scheduler}.png'), dpi=300)
     plt.close()
     
-    # Efficiency heatmap
-    plt.figure(figsize=(10, 6))
-    sns.heatmap(df.pivot_table(index='processes', columns='threads', values='efficiency'), annot=True, cmap='coolwarm', fmt='.2f')
-    plt.title("Efficiency Heatmap - Static Scheduler")
-    plt.savefig(os.path.join(output_dir, 'efficiency_heatmap.png'), dpi=300)
+def plot_comparison(df, output_dir, metric='speedup'):
+    # Filter for threads > 1
+    df_filtered = df[df['threads'] > 1].copy()
+    if df_filtered.empty or len(df_filtered['scheduler'].unique()) < 2:
+        print(f"Not enough data for comparison plot: {metric}. Need multiple schedulers and threads > 1.")
+        return
+
+    # Combine processes and threads for x-axis
+    df_filtered['config'] = df_filtered.apply(lambda x: f"P{x['processes']}T{x['threads']}", axis=1)
+
+    plt.figure(figsize=(12, 6))
+    # Hue by scheduler
+    sns.barplot(data=df_filtered, x='config', y=metric, hue='scheduler')
+    plt.title(f"Comparison of {metric.capitalize()} (Static vs Dynamic Scheduler)")
+    plt.xlabel("Configuration (Processes x Threads)")
+    plt.ylabel(metric.capitalize())
+    plt.xticks(rotation=45)
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'comparison_{metric}.png'), dpi=300)
     plt.close()
-    print("Saved speedup_heatmap.png and efficiency_heatmap.png")
+    print(f"Saved comparison_{metric}.png")
 
 if __name__ == "__main__":
     results_dir = 'results'
@@ -112,9 +136,16 @@ if __name__ == "__main__":
         print("Data loaded successfully.")
         df = calculate_metrics(df)
         
-        plot_speedup(df, output_dir)
-        plot_efficiency_vs_threads(df, output_dir)
-        plot_heatmaps(df, output_dir)
+        for scheduler in df['scheduler'].unique():
+            print(f"Generating plots for scheduler: {scheduler}")
+            plot_speedup(df, output_dir, scheduler)
+            plot_efficiency_vs_threads(df, output_dir, scheduler)
+            plot_heatmaps(df, output_dir, scheduler)
+        
+        # New comparison plots
+        plot_comparison(df, output_dir, metric='speedup')
+        plot_comparison(df, output_dir, metric='efficiency')
+        
         print("Plots generated.")
     else:
         print("No data loaded. Check the results directory.")
