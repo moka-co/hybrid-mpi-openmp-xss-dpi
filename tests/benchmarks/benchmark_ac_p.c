@@ -6,6 +6,8 @@
 #include "../../src/pattern_matching.h"
 #include "../../src/dataset.h"
 
+#define MASTER_RANK 0
+
 // Load patterns from a file
 static char **load_patterns_from_file(const char *filepath, int *out_count)
 {
@@ -46,20 +48,20 @@ int main(int argc, char *argv[])
     ACAutomaton *ac = NULL;
     int num_states = 0, capacity = 0;
 
-    // 1. Rank 1 builds automaton and broadcasts it
-    if (rank == 1) {
-        printf("Rank 1: Building automaton...\n");
+    // 1. Rank MASTER_RANK builds automaton and broadcasts it
+    if (rank == MASTER_RANK) {
+        printf("Rank %d: Building automaton...\n", MASTER_RANK);
         patterns = load_patterns_from_file("datasets-private/string_xss_only.txt", &num_patterns);
         ac = ac_build((const char **)patterns, num_patterns);
         num_states = ac->num_states;
         capacity = ac->capacity;
     }
 
-    MPI_Bcast(&num_patterns, 1, MPI_INT, 1, MPI_COMM_WORLD);
-    MPI_Bcast(&num_states, 1, MPI_INT, 1, MPI_COMM_WORLD);
-    MPI_Bcast(&capacity, 1, MPI_INT, 1, MPI_COMM_WORLD);
+    MPI_Bcast(&num_patterns, 1, MPI_INT, MASTER_RANK, MPI_COMM_WORLD);
+    MPI_Bcast(&num_states, 1, MPI_INT, MASTER_RANK, MPI_COMM_WORLD);
+    MPI_Bcast(&capacity, 1, MPI_INT, MASTER_RANK, MPI_COMM_WORLD);
 
-    if (rank != 1) {
+    if (rank != MASTER_RANK) {
         printf("Rank %d: Allocating automaton buffers...\n", rank);
         ac = (ACAutomaton *)calloc(1, sizeof(ACAutomaton));
         ac->num_states = num_states;
@@ -78,7 +80,7 @@ int main(int argc, char *argv[])
     size_t states_offset = 0;
     while (states_bytes_left > 0) {
         int chunk = (states_bytes_left > MAX_MPI_CHUNK_SIZE) ? (int)MAX_MPI_CHUNK_SIZE : (int)states_bytes_left;
-        MPI_Bcast((char *)ac->states + states_offset, chunk, MPI_BYTE, 1, MPI_COMM_WORLD);
+        MPI_Bcast((char *)ac->states + states_offset, chunk, MPI_BYTE, MASTER_RANK, MPI_COMM_WORLD);
         states_offset += chunk;
         states_bytes_left -= chunk;
     }
@@ -88,12 +90,12 @@ int main(int argc, char *argv[])
     size_t output_offset = 0;
     while (output_bytes_left > 0) {
         int chunk = (output_bytes_left > MAX_MPI_CHUNK_SIZE) ? (int)MAX_MPI_CHUNK_SIZE : (int)output_bytes_left;
-        MPI_Bcast((char *)ac->output_next + output_offset, chunk, MPI_BYTE, 1, MPI_COMM_WORLD);
+        MPI_Bcast((char *)ac->output_next + output_offset, chunk, MPI_BYTE, MASTER_RANK, MPI_COMM_WORLD);
         output_offset += chunk;
         output_bytes_left -= chunk;
     }
 
-    // 2. Rank 1 generates and distributes packets
+    // 2. Rank MASTER_RANK generates and distributes packets
     printf("Rank %d: Distributing packets...\n", rank);
     int total_packets = 1000000;
     // Ensure total_packets is divisible by size to simplify distribution
@@ -102,13 +104,13 @@ int main(int argc, char *argv[])
     Packet *my_packets = (Packet *)malloc(packets_per_proc * sizeof(Packet));
     Packet *all_packets = NULL;
 
-    if (rank == 1) {
-        printf("Rank 1: Generating %d packets...\n", total_packets);
+    if (rank == MASTER_RANK) {
+        printf("Rank %d: Generating %d packets...\n", MASTER_RANK, total_packets);
         LengthDistParams lp = { 7.0, 1.0, 64, 8192 };
         all_packets = generate_packets(total_packets, 42, lp, 0.5, (const char **)patterns, num_patterns);
 
         for (int i = 0; i < size; i++) {
-            if (i == 1) {
+            if (i == MASTER_RANK) {
                 for (int j = 0; j < packets_per_proc; j++) my_packets[j] = all_packets[i * packets_per_proc + j];
             } else {
                 for (int j = 0; j < packets_per_proc; j++) {
@@ -121,10 +123,10 @@ int main(int argc, char *argv[])
         }
     } else {
         for (int j = 0; j < packets_per_proc; j++) {
-            MPI_Recv(&my_packets[j].len, 1, MPI_UNSIGNED_LONG, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            MPI_Recv(&my_packets[j].has_xss, 1, MPI_INT, 1, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(&my_packets[j].len, 1, MPI_UNSIGNED_LONG, MASTER_RANK, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(&my_packets[j].has_xss, 1, MPI_INT, MASTER_RANK, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             my_packets[j].data = (uint8_t *)malloc(my_packets[j].len);
-            MPI_Recv(my_packets[j].data, my_packets[j].len, MPI_BYTE, 1, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(my_packets[j].data, my_packets[j].len, MPI_BYTE, MASTER_RANK, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
     }
 
@@ -204,7 +206,7 @@ int main(int argc, char *argv[])
     }
 
     // Cleanup
-    if (rank != 1) {
+    if (rank != MASTER_RANK) {
         for (int j = 0; j < packets_per_proc; j++) free(my_packets[j].data);
         free(ac->states);
         free(ac->output_next);
