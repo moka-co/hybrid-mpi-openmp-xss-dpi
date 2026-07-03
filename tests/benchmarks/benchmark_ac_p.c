@@ -167,7 +167,8 @@ int main(int argc, char *argv[])
             "    \"total_data_scanned_mb\": %.2f,\n"
             "    \"avg_packet_size\": %.1f,\n"
             "    \"processes\": %d,\n"
-            "    \"threads\": 1\n"
+            "    \"threads\": 1,\n"
+            "    \"scheduler\": \"static\"\n"
             "  },\n"
             "  \"Results\": {\n"
             "    \"scan_time_sec\": %.6f,\n"
@@ -193,7 +194,7 @@ int main(int argc, char *argv[])
 
         // Save to file
         char filename[64];
-        snprintf(filename, sizeof(filename), "results/benchmark_ac_p%d.json", size);
+        snprintf(filename, sizeof(filename), "results/benchmark_ac_p%d_static.json", size);
         FILE *f = fopen(filename, "w");
         if (f) {
             fprintf(f, "%s\n", json_buffer);

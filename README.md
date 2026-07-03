@@ -16,6 +16,11 @@ make benchmark_p NUM_PROCESS=2
 make benchmark_pt NUM_PROCESS=2 NUM_THREADS=4
 ```
 
+Alternatively, you can run all experiments automatically:
+```bash
+python3 run_experiments.py
+```
+
 Results are saved under `results/`. After running these, it is possible to generate plots:
 ```
 cd analysis

@@ -8,6 +8,7 @@ CORE_SRC = src/pattern_matching.c src/dataset.c src/config.c src/performance.c
 MAIN_SRC = src/dpi_engine.c
 # Corrected: Binary names should not have .o extension
 MAIN_BIN = dpi_engine
+OBJ_MAIN = src/dpi_engine.o
 
 # Dataset used by the run* targets below.
 DATASET = datasets/packets.txt
@@ -36,11 +37,14 @@ CSIC_BIN     = tests/generate_csic_dataset
 
 .PHONY: all clean test test_basic test_file test_config benchmark benchmark_t benchmark_p benchmark_pt validate csic_dataset run
 
-all: $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
+all: $(MAIN_BIN) $(OBJ_MAIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
 
 # Build rules
 $(MAIN_BIN): $(MAIN_SRC) $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(OBJ_MAIN): $(MAIN_SRC)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TEST_BIN_1): tests/test_ac.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)

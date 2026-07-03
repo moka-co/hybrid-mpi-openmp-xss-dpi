@@ -4,6 +4,7 @@ import os
 import sys
 
 # Experiment configurations
+SCHEDULERS = ["static", "dynamic,16"]
 THREADS = [2, 4, 8]
 PROCESSES = [1, 2, 4]
 HYBRID_CONFIGS = [
@@ -12,11 +13,9 @@ HYBRID_CONFIGS = [
     (4, 2), (4, 4), (4, 8)
 ]
 
-BASE_SEED = 1024 * 1000
-
-def run_cmd(cmd):
+def run_cmd(cmd, env=None):
     print(f"Running: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, env=env, check=True)
 
 def main():
     # Set the working directory to the current shell location
@@ -28,28 +27,34 @@ def main():
     if not os.path.exists("results"):
         os.makedirs("results")
 
-    # 1. Sequential
-    # Using benchmark_ac directly
-    run_cmd(["./tests/benchmarks/benchmark_ac"])
+    # Base environment
+    base_env = os.environ.copy()
 
-    # 2. Multithread
-    for t in THREADS:
-        # Assuming the benchmark_ac_t binary might need an env var for threads
-        # or we just rely on OMP_NUM_THREADS
-        env = os.environ.copy()
-        os.environ["OMP_NUM_THREADS"] = str(t)
-        subprocess.run(["./tests/benchmarks/benchmark_ac_t"], env=env, check=True)
+    for sched in SCHEDULERS:
+        print(f"--- Running experiments with scheduler: {sched} ---")
+        current_env = base_env.copy()
+        current_env["OMP_SCHEDULE"] = sched
 
-    # 3. Multiprocess
-    for p in PROCESSES:
-        seed = BASE_SEED + p * 100
-        run_cmd(["mpirun", "--allow-run-as-root", "-np", str(p), "./tests/benchmarks/benchmark_ac_p"])
+        # 1. Sequential (doesn't depend on OMP_SCHEDULE)
+        if sched == "static":
+            run_cmd(["./tests/benchmarks/benchmark_ac"])
 
-    # 4. Multiprocess + Multithread
-    for p, t in HYBRID_CONFIGS:
-        seed = BASE_SEED + p * 100 + t * 10
-        os.environ['OMP_NUM_THREADS'] = str(t)
-        run_cmd(["mpirun", "--allow-run-as-root", "-np", str(p), "./tests/benchmarks/benchmark_ac_pt"])
+        # 2. Multithread
+        for t in THREADS:
+            env = current_env.copy()
+            env["OMP_NUM_THREADS"] = str(t)
+            run_cmd(["./tests/benchmarks/benchmark_ac_t"], env=env)
+
+        # 3. Multiprocess (doesn't depend on OMP_SCHEDULE directly as it's MPI)
+        if sched == "static":
+            for p in PROCESSES:
+                run_cmd(["mpirun", "--allow-run-as-root", "-np", str(p), "./tests/benchmarks/benchmark_ac_p"])
+
+        # 4. Multiprocess + Multithread
+        for p, t in HYBRID_CONFIGS:
+            env = current_env.copy()
+            env['OMP_NUM_THREADS'] = str(t)
+            run_cmd(["mpirun", "--allow-run-as-root", "-np", str(p), "-x", "OMP_NUM_THREADS", "-x", "OMP_SCHEDULE", "./tests/benchmarks/benchmark_ac_pt"], env=env)
 
 if __name__ == "__main__":
     main()
