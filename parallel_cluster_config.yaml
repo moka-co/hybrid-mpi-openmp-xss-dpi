@@ -1,0 +1,33 @@
+Region: eu-north-1
+Image:
+  Os: ubuntu2204                    # Optimized for modern compilers & MPI runtimes
+HeadNode:
+  InstanceType: c6i.2xlarge         # Manage jobs without paying for massive idle hardware
+  Networking:
+    SubnetId: subnet-xxxxx    # Put your specific VPC subnet ID here
+    ElasticIp: true
+  Ssh:
+    KeyName: hpc_id       # The EC2 key pair used to log in via terminal
+Scheduling:
+  Scheduler: slurm                  # Deploys the Slurm workload manager natively
+  SlurmQueues:
+    - Name: compute-fleet
+      ComputeResources:
+        - Name: hpc-nodes
+          InstanceType: c6in.2xlarge # 32 physical cores per node—excellent for OpenMP scale
+          MinCount: 0                # Dynamically scales down to 0 to save money when idle
+          MaxCount: 4                # Scales up to 4 nodes (128 total cores) under load
+          Efa:
+            Enabled: false            
+      Networking:
+        SubnetIds:
+          - subnet-xxxx # Private subnet, different from the other one, routes via NAT gateway
+        PlacementGroup:
+          Enabled: true              # Forces nodes physically close together in the data center
+SharedStorage:
+  - Name: SharedEBS
+    StorageType: Ebs
+    MountDir: /shared
+    EbsSettings:
+      VolumeType: gp3
+      Size: 50         
