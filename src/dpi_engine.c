@@ -101,15 +101,22 @@ void run_omp(const Config *config, ACAutomaton *ac, Packet *packets, uint32_t nu
 #ifdef _OPENMP
     long matches = 0;
     long bytes_scanned = 0;
+    /* The choice of schedule is deferred to runtime to allow flexible tuning based
+     * on workload characteristics (e.g., heterogeneous packet sizes). */
     omp_sched_t selected_sched = omp_sched_dynamic;
     if (strcmp(config->schedule_type, "guided") == 0) selected_sched = omp_sched_guided;
     else if (strcmp(config->schedule_type, "static") == 0) selected_sched = omp_sched_static;
     omp_set_schedule(selected_sched, (int)config->schedule_chunk);
     double start_time = MPI_Wtime();
+    /* Thread-safety assumption: The Aho-Corasick automaton `ac` is treated as read-only.
+     * The `ACMatchList` is allocated on the stack within the parallel region,
+     * ensuring that each thread maintains its own thread-local match list
+     * during the concurrent scan, avoiding data races. */
     #pragma omp parallel num_threads(config->num_omp_threads) reduction(+:matches, bytes_scanned)
     {
         ACMatchList ml;
         ac_matchlist_init(&ml, 64);
+        /* 'runtime' allows selection based on the schedule set via omp_set_schedule above. */
         #pragma omp for schedule(runtime)
         for (uint32_t i = 0; i < num_packets; i++) {
             ac_scan_into(ac, (const uint8_t *)packets[i].data, packets[i].len, &ml);
@@ -152,15 +159,22 @@ void run_hybrid(const Config *config, ACAutomaton *ac, Packet *packets, uint32_t
 #if defined(HAVE_MPI) && defined(_OPENMP)
     long matches = 0;
     long bytes_scanned = 0;
+    /* The choice of schedule is deferred to runtime to allow flexible tuning based
+     * on workload characteristics (e.g., heterogeneous packet sizes). */
     omp_sched_t selected_sched = omp_sched_dynamic;
     if (strcmp(config->schedule_type, "guided") == 0) selected_sched = omp_sched_guided;
     else if (strcmp(config->schedule_type, "static") == 0) selected_sched = omp_sched_static;
     omp_set_schedule(selected_sched, (int)config->schedule_chunk);
     double start_time = MPI_Wtime();
+    /* Thread-safety assumption: The Aho-Corasick automaton `ac` is treated as read-only.
+     * The `ACMatchList` is allocated on the stack within the parallel region,
+     * ensuring that each thread maintains its own thread-local match list
+     * during the concurrent scan, avoiding data races. */
     #pragma omp parallel num_threads(config->num_omp_threads) reduction(+:matches, bytes_scanned)
     {
         ACMatchList ml;
         ac_matchlist_init(&ml, 64);
+        /* 'runtime' allows selection based on the schedule set via omp_set_schedule above. */
         #pragma omp for schedule(runtime)
         for (uint32_t i = 0; i < num_packets; i++) {
             ac_scan_into(ac, (const uint8_t *)packets[i].data, packets[i].len, &ml);

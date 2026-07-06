@@ -1,3 +1,11 @@
+// tests/benchmarks/benchmark_ac_p.c
+//
+// File: benchmark_ac_p.c
+// Description: MPI-parallelized performance benchmark for Aho-Corasick pattern matching.
+//
+// Compile: mpicc -O3 -Wall -Isrc/ -o tests/benchmarks/benchmark_ac_p tests/benchmarks/benchmark_ac_p.c src/pattern_matching.c src/dataset.c
+// Run: mpirun -np <num_ranks> ./tests/benchmarks/benchmark_ac_p
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -8,7 +16,9 @@
 
 #define MASTER_RANK 0
 
-// Load patterns from a file
+/**
+ * Loads patterns from a file.
+ */
 static char **load_patterns_from_file(const char *filepath, int *out_count)
 {
     FILE *fp = fopen(filepath, "r");
@@ -36,6 +46,9 @@ static char **load_patterns_from_file(const char *filepath, int *out_count)
     return patterns;
 }
 
+/**
+ * Main execution: Runs MPI-parallelized Aho-Corasick benchmark.
+ */
 int main(int argc, char *argv[])
 {
     int rank, size;

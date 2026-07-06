@@ -1,4 +1,9 @@
 // tests/benchmarks/benchmark_ac.c
+//
+// File: benchmark_ac.c
+// Description: Performance baseline for Aho-Corasick pattern matching
+//              in a single-threaded execution context.
+//
 // Compile: gcc -O3 -Wall -Isrc/ -o tests/benchmarks/benchmark_ac tests/benchmarks/benchmark_ac.c src/pattern_matching.c
 // Run: ./tests/benchmarks/benchmark_ac
 
@@ -12,14 +17,18 @@
 // Simple random number generator (seeded) for reproducibility
 static uint32_t rng_state = 42;
 
+/**
+ * Returns a pseudo-random 32-bit unsigned integer.
+ */
 static uint32_t rand_u32(void)
 {
     rng_state = rng_state * 1103515245 + 12345;
     return (rng_state / 65536) % 32768;
 }
 
-// Generate a synthetic packet of random length (between min_len and max_len).
-// Fills with pseudo-random bytes.
+/**
+ * Generates a synthetic packet of random length, filled with random bytes.
+ */
 static uint8_t *gen_random_packet(size_t min_len, size_t max_len, size_t *out_len)
 {
     size_t len = min_len + (rand_u32() % (max_len - min_len + 1));
@@ -31,9 +40,9 @@ static uint8_t *gen_random_packet(size_t min_len, size_t max_len, size_t *out_le
     return pkt;
 }
 
-// Get time in seconds (platform-dependent).
-// On Unix: uses clock_gettime.
-// On Windows: uses GetTickCount64 (rough approximation).
+/**
+ * Returns the current time in seconds, platform-dependent.
+ */
 static double get_time_sec(void)
 {
 #ifdef _WIN32
@@ -45,8 +54,9 @@ static double get_time_sec(void)
 #endif
 }
 
-// Load patterns from a file (one pattern per line)
-// Grows the array dynamically as patterns are read, no upper bound needed.
+/**
+ * Loads patterns from a file (one pattern per line).
+ */
 static char **load_patterns_from_file(const char *filepath, int *out_count)
 {
     FILE *fp = fopen(filepath, "r");
@@ -94,6 +104,9 @@ static char **load_patterns_from_file(const char *filepath, int *out_count)
     return patterns;
 }
 
+/**
+ * Main execution: Runs single-threaded Aho-Corasick benchmark.
+ */
 int main(int argc, char *argv[])
 {
     printf("Pattern Matching Single-Threaded Performance Baseline\n\n");

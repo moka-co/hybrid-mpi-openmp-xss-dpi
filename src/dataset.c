@@ -13,11 +13,6 @@
 
 // -----------------------------------------------------------------------
 // RNG helpers
-//
-// We use the standard library rand()/srand() rather than a custom PRNG.
-// This is sufficient for generating a synthetic dataset (we are not doing
-// cryptography or rigorous statistical sampling) and srand(seed) gives us
-// reproducibility: same seed + same call sequence => same dataset.
 // -----------------------------------------------------------------------
 
 // Uniform double in [0, 1).
@@ -52,7 +47,6 @@ static size_t sample_length(const LengthDistParams *p)
 }
 
 // Fill a buffer with random printable ASCII bytes (space through '~').
-// This is the packet "background" / non-malicious filler.
 static void fill_random_ascii(uint8_t *buf, size_t len)
 {
     const int lo = 0x20; // ' '
@@ -64,19 +58,15 @@ static void fill_random_ascii(uint8_t *buf, size_t len)
 
 // -----------------------------------------------------------------------
 // Pattern lookup by length
-//
-// To inject a payload into a packet we need a pattern that fits inside it.
-// Rather than scanning the whole pattern list per packet (O(num_patterns)
-// each time), we sort pattern indices by length once up front, then use
-// binary search per packet to find how many patterns fit and pick one
-// uniformly at random among them.
 // -----------------------------------------------------------------------
 
+// Helper structure for sorting pattern indices by length
 typedef struct {
     int    index; // index into the original pattern_list
     size_t len;   // strlen(pattern_list[index]), cached
 } PatternEntry;
 
+// Comparator for PatternEntry based on length
 static int cmp_pattern_entry(const void *a, const void *b)
 {
     const PatternEntry *pa = (const PatternEntry *)a;
@@ -86,6 +76,7 @@ static int cmp_pattern_entry(const void *a, const void *b)
     return 0;
 }
 
+// Builds a sorted index of patterns by their length for efficient lookups
 static PatternEntry *build_sorted_pattern_index(const char **pattern_list, int num_patterns)
 {
     PatternEntry *sorted = (PatternEntry *)malloc(num_patterns * sizeof(PatternEntry));
@@ -101,7 +92,7 @@ static PatternEntry *build_sorted_pattern_index(const char **pattern_list, int n
 }
 
 // Returns the number of entries in `sorted` whose length is <= max_len
-// (upper-bound binary search). Entries [0, result) are all eligible.
+// (upper-bound binary search).
 static int count_fitting_patterns(const PatternEntry *sorted, int num_patterns, size_t max_len)
 {
     int lo = 0, hi = num_patterns;
@@ -114,8 +105,7 @@ static int count_fitting_patterns(const PatternEntry *sorted, int num_patterns, 
 }
 
 // Overwrite `len` bytes of `data` starting at a random valid offset with
-// `payload` (payload_len bytes). Assumes payload_len <= len (checked by
-// the caller via count_fitting_patterns()).
+// `payload`.
 static void inject_payload(uint8_t *data, size_t len, const char *payload, size_t payload_len)
 {
     size_t max_offset = len - payload_len;
@@ -127,6 +117,7 @@ static void inject_payload(uint8_t *data, size_t len, const char *payload, size_
 // Public API
 // -----------------------------------------------------------------------
 
+// Generates a synthetic dataset of packets
 Packet *generate_packets(int count,
                           unsigned int seed,
                           LengthDistParams length_params,
@@ -172,7 +163,6 @@ Packet *generate_packets(int count,
                 inject_payload(data, len, pattern_list[pat_idx], pat_len);
                 has_xss = 1;
             }
-            // else: packet too short for any available payload; left clean.
         }
 
         packets[i].data    = data;
@@ -184,6 +174,7 @@ Packet *generate_packets(int count,
     return packets;
 }
 
+// Frees the allocated memory for packets
 void free_packets(Packet *packets, int count)
 {
     if (!packets) return;
@@ -193,6 +184,7 @@ void free_packets(Packet *packets, int count)
     free(packets);
 }
 
+// Saves the generated packets to a file
 int save_packets_to_file(const char *filepath, const Packet *packets, int count)
 {
     FILE *f = fopen(filepath, "w"); // Text mode
@@ -215,6 +207,7 @@ int save_packets_to_file(const char *filepath, const Packet *packets, int count)
     return 0;
 }
 
+// Loads packets from a file
 Packet *load_packets_from_file(const char *filepath, int *out_count)
 {
     FILE *f = fopen(filepath, "r"); // Text mode

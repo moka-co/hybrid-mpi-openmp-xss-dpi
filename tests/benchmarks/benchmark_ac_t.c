@@ -1,3 +1,11 @@
+// tests/benchmarks/benchmark_ac_t.c
+//
+// File: benchmark_ac_t.c
+// Description: OpenMP-parallelized performance benchmark for Aho-Corasick pattern matching.
+//
+// Compile: gcc -O3 -Wall -fopenmp -Isrc/ -o tests/benchmarks/benchmark_ac_t tests/benchmarks/benchmark_ac_t.c src/pattern_matching.c
+// Run: OMP_NUM_THREADS=<num_threads> ./tests/benchmarks/benchmark_ac_t
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -13,14 +21,18 @@
 // Simple random number generator (seeded) for reproducibility
 static uint32_t rng_state = 42;
 
+/**
+ * Returns a pseudo-random 32-bit unsigned integer.
+ */
 static uint32_t rand_u32(void)
 {
     rng_state = rng_state * 1103515245 + 12345;
     return (rng_state / 65536) % 32768;
 }
 
-// Generate a synthetic packet of random length (between min_len and max_len).
-// Fills with pseudo-random bytes.
+/**
+ * Generates a synthetic packet of random length, filled with random bytes.
+ */
 static uint8_t *gen_random_packet(size_t min_len, size_t max_len, size_t *out_len)
 {
     size_t len = min_len + (rand_u32() % (max_len - min_len + 1));
@@ -32,7 +44,9 @@ static uint8_t *gen_random_packet(size_t min_len, size_t max_len, size_t *out_le
     return pkt;
 }
 
-// Get time in seconds (platform-dependent).
+/**
+ * Returns the current time in seconds, platform-dependent.
+ */
 static double get_time_sec(void)
 {
 #ifdef _WIN32
@@ -44,7 +58,9 @@ static double get_time_sec(void)
 #endif
 }
 
-// Load patterns from a file (one pattern per line)
+/**
+ * Loads patterns from a file.
+ */
 static char **load_patterns_from_file(const char *filepath, int *out_count)
 {
     FILE *fp = fopen(filepath, "r");
@@ -92,6 +108,9 @@ static char **load_patterns_from_file(const char *filepath, int *out_count)
     return patterns;
 }
 
+/**
+ * Main execution: Runs OpenMP-parallelized Aho-Corasick benchmark.
+ */
 int main(int argc, char *argv[])
 {
     printf("Pattern Matching Multithreaded Performance Baseline (OpenMP)\n\n");
@@ -147,6 +166,8 @@ int main(int argc, char *argv[])
     double scan_start = get_time_sec();
     uint64_t total_matches = 0;
 
+    /* Thread-safety assumption: The Aho-Corasick automaton `ac` is read-only.
+     * Each OpenMP thread has its own `ACMatchList` to avoid data races. */
     #pragma omp parallel
     {
         ACMatchList ml;

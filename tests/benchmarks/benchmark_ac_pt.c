@@ -1,3 +1,11 @@
+// tests/benchmarks/benchmark_ac_pt.c
+//
+// File: benchmark_ac_pt.c
+// Description: Hybrid MPI+OpenMP parallelized performance benchmark for Aho-Corasick pattern matching.
+//
+// Compile: mpicc -O3 -Wall -fopenmp -Isrc/ -o tests/benchmarks/benchmark_ac_pt tests/benchmarks/benchmark_ac_pt.c src/pattern_matching.c src/dataset.c
+// Run: mpirun -np <num_ranks> ./tests/benchmarks/benchmark_ac_pt
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -9,7 +17,9 @@
 
 #define MASTER_RANK 0
 
-// Reusing helper function from previous benchmarks
+/**
+ * Loads patterns from a file.
+ */
 static char **load_patterns_from_file(const char *filepath, int *out_count)
 {
     FILE *fp = fopen(filepath, "r");
@@ -37,6 +47,9 @@ static char **load_patterns_from_file(const char *filepath, int *out_count)
     return patterns;
 }
 
+/**
+ * Main execution: Runs MPI+OpenMP parallelized Aho-Corasick benchmark.
+ */
 int main(int argc, char *argv[])
 {
     int provided;
@@ -130,6 +143,8 @@ int main(int argc, char *argv[])
     double scan_start = MPI_Wtime();
     
     uint64_t total_matches = 0;
+    /* Thread-safety assumption: The Aho-Corasick automaton `ac` is read-only.
+     * Each OpenMP thread has its own `ACMatchList` to avoid data races. */
     #pragma omp parallel reduction(+:total_matches)
     {
         //Match list is allocated once per thread

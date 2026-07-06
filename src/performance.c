@@ -4,6 +4,9 @@
 #include <string.h>
 #include <unistd.h>
 
+/**
+ * Computes performance metrics based on execution time and data processed.
+ */
 void compute_metrics(PerformanceMetrics *metrics, double exec_time, long bytes_scanned, double baseline_time, int num_workers) {
     metrics->exec_time = exec_time;
     metrics->throughput_mb_s = ((double)bytes_scanned / 1e6) / exec_time;
@@ -11,6 +14,9 @@ void compute_metrics(PerformanceMetrics *metrics, double exec_time, long bytes_s
     metrics->efficiency = metrics->speedup / (double)num_workers;
 }
 
+/**
+ * Prints a performance report for a specific strategy.
+ */
 void print_performance_report(const Config *cfg, const char *strategy_name, const PerformanceMetrics *metrics, int num_workers) {
     printf("\n=== Performance Report (%s) ===\n", strategy_name);
     printf("  Dataset File:           %s\n", cfg->dataset_file);
@@ -23,6 +29,9 @@ void print_performance_report(const Config *cfg, const char *strategy_name, cons
     printf("======================================\n");
 }
 
+/**
+ * Prints a comparison report across different strategies.
+ */
 void print_comparison(const PerformanceMetrics *m_seq, const PerformanceMetrics *m_omp, const PerformanceMetrics *m_mpi, const PerformanceMetrics *m_hybrid) {
     printf("\n=== Performance Comparison Report ===\n");
     printf("%-12s | %-12s | %-12s\n", "Strategy", "Exec Time (s)", "Speedup");
@@ -34,6 +43,9 @@ void print_comparison(const PerformanceMetrics *m_seq, const PerformanceMetrics 
     printf("======================================\n");
 }
 
+/**
+ * Exports metrics to a CSV file.
+ */
 void export_metrics_to_csv(const Config *cfg, int num_ranks, const PerformanceMetrics *metrics_seq, const PerformanceMetrics *metrics_a, const PerformanceMetrics *metrics_b) {
     if (cfg->output_file[0] == '\0' || strcmp(cfg->output_format, "csv") != 0) return;
 

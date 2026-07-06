@@ -15,18 +15,28 @@
 #include <omp.h>
 #endif
 
+// Initializes the configuration structure with sensible default values.
 void init_default_config(Config *cfg) {
+    // Clear the memory for the configuration structure
     memset(cfg, 0, sizeof(Config));
+    
+    // Set default dataset parameters (1GB, 1M packets)
     cfg->dataset_size = 1024 * 1024 * 1024; // 1GB default
-    cfg->packet_count = 1000000;            // 1kk packets default
+    cfg->packet_count = 1000000;            // 1M packets default
+    
+    // Set default file paths
     strncpy(cfg->dataset_file, "datasets/packets.bin", sizeof(cfg->dataset_file) - 1);
     strncpy(cfg->pattern_file, "datasets/patterns.txt", sizeof(cfg->pattern_file) - 1);
     cfg->num_patterns = 0;
+    
+    // Set default execution parameters
     cfg->num_mpi_ranks = 1;
-    cfg->num_omp_threads = 4;              // 4 OMP threads default
+    cfg->num_omp_threads = 4;              // 4 OpenMP threads default
     strncpy(cfg->strategy_type, "all", sizeof(cfg->strategy_type) - 1);
     strncpy(cfg->schedule_type, "static", sizeof(cfg->schedule_type) - 1);
     cfg->schedule_chunk = 0;               // 0 means default chunk sizing
+    
+    // Set output configuration and other settings
     strncpy(cfg->output_file, "results.csv", sizeof(cfg->output_file) - 1);
     strncpy(cfg->output_format, "csv", sizeof(cfg->output_format) - 1);
     cfg->num_repetitions = 1;
@@ -34,6 +44,7 @@ void init_default_config(Config *cfg) {
     cfg->verbose = 0;
 }
 
+// Displays the usage instructions for the application to stderr.
 void print_usage(const char *prog_name) {
     fprintf(stderr, "Usage: %s [options]\n", prog_name);
     fprintf(stderr, "Options:\n");
@@ -52,10 +63,12 @@ void print_usage(const char *prog_name) {
     fprintf(stderr, "  --verbose            Enable verbose debug logs\n");
 }
 
+// Parses command-line arguments and updates the configuration structure.
 void parse_arguments(int argc, char *argv[], Config *cfg) {
     int opt;
     int option_index = 0;
 
+    // Define supported long options
     static struct option long_options[] = {
         {"dataset-mb",   required_argument, 0, 'd'},
         {"num-packets",  required_argument, 0, 'p'},
@@ -74,6 +87,7 @@ void parse_arguments(int argc, char *argv[], Config *cfg) {
         {0, 0, 0, 0}
     };
 
+    // Process options
     while ((opt = getopt_long(argc, argv, "d:p:D:f:m:t:s:r:o:x:n:vh", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'd':
@@ -130,6 +144,8 @@ void parse_arguments(int argc, char *argv[], Config *cfg) {
     }
 }
 
+// Validates the configuration parameters.
+// Returns 1 if valid, 0 otherwise.
 int validate_config(const Config *cfg) {
     // 1. Packet count validation
     if (cfg->packet_count == 0) {
@@ -176,6 +192,7 @@ int validate_config(const Config *cfg) {
     return 1;
 }
 
+// Prints the current configuration to stdout.
 void print_config(const Config *cfg) {
     printf("=== Configuration Parameters ===\n");
     printf("  Dataset Size:       %lu Bytes (%lu MB)\n", cfg->dataset_size, cfg->dataset_size / (1024 * 1024));
@@ -194,6 +211,7 @@ void print_config(const Config *cfg) {
     printf("=================================\n");
 }
 
+// Captures system metadata (hostname, compiler, libraries).
 void capture_metadata(SystemMetadata *meta) {
     memset(meta, 0, sizeof(SystemMetadata));
 

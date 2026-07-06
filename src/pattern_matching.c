@@ -16,6 +16,7 @@ static void init_state(ACState *s)
     s->output  = -1;
 }
 
+// Ensures sufficient capacity for the automaton states and output lists.
 static int ensure_capacity(ACAutomaton *ac)
 {
     if (ac->num_states < ac->capacity) return 1; // Plenty of space
@@ -39,21 +40,20 @@ static int ensure_capacity(ACAutomaton *ac)
     return 1;
 }
 
-
-//Allocate a new state in the automaton
-// Returns the new state's index or -1 if capacity is exhausted
+// Allocates a new state in the automaton.
+// Returns the new state's index or -1 if capacity is exhausted.
 static int alloc_state(ACAutomaton *ac)
 {
     if (!ensure_capacity(ac)) return -1; // Allocation failed
 
     int id = ac->num_states++;
-    // init_state is now handled inside ensure_capacity or here
     return id;
 }
 
 /* Trie Construction */
-//For each pattern we walk or create a path of states in the trie, one state per character. 
-// When we reach the last character the mark the node as an output node for this pattern
+
+// For each pattern we walk or create a path of states in the trie, one state per character. 
+// When we reach the last character, we mark the node as an output node for this pattern.
 static void build_trie(ACAutomaton *ac)
 {
     for (int p = 0; p < ac->num_patterns; p++) {
@@ -84,22 +84,20 @@ static void build_trie(ACAutomaton *ac)
     }
 }
 
-/* Failure link computation (BFS) 
-/ Algorithm (standard Aho-Corasick BFS)
-    - Root's failure link → root (self)
-    - All depth-1 children → root
-    - For deeper nodes: follow the parent's failure link until 
-    you find a state that has a transition for this byte, 
-    then that transition is the failure target.
-
-    Output nodes propagation is also done by this routine:
-    if a failure-target state has output, the current state inherits it
-    (so we don't miss patterns that are suffixes of longer patterns).
-
-*/
+/* Failure link computation (BFS) */
+// Algorithm (standard Aho-Corasick BFS):
+// - Root's failure link -> root (self)
+// - All depth-1 children -> root
+// - For deeper nodes: follow the parent's failure link until 
+//   you find a state that has a transition for this byte, 
+//   then that transition is the failure target.
+//
+// Output nodes propagation is also done by this routine:
+// if a failure-target state has output, the current state inherits it
+// (so we don't miss patterns that are suffixes of longer patterns).
 static void build_failure_links(ACAutomaton *ac)
 {
-    //BFS can be implemented using a simple queue (array-based) 
+    // BFS can be implemented using a simple queue (array-based) 
     // of maximum size of "num_states" (at most AC_MAX_STATES)
     int *queue = (int *)malloc(ac->num_states * sizeof(int));
     if (!queue) {
@@ -111,24 +109,24 @@ static void build_failure_links(ACAutomaton *ac)
     // Initialise: for all direct children of root
     for (int c = 0; c < AC_ALPHABET_SIZE; c++) {
         int s = ac->states[0].goto_table[c];
-        if (s == -1) { //No transition, set root's goto to root itself
+        if (s == -1) { // No transition, set root's goto to root itself
             ac->states[0].goto_table[c] = 0;
-        } else { //for nodes of depth 1, the failure link must point back to root
+        } else { // for nodes of depth 1, the failure link must point back to root
             ac->states[s].failure = 0;
             queue[tail++] = s;
         }
     }
 
-    //BFS over the remaining nodes
+    // BFS over the remaining nodes
     while (head < tail) {
         int r = queue[head++];
 
         for (int c = 0; c < AC_ALPHABET_SIZE; c++) {
             int s = ac->states[r].goto_table[c];
-            if (s == -1) { //No transition from pattern r to btye c
-                //fill the "goto" by following r's failure link
-                //This turns the sparse trie into a complete DFA:
-                //every (state, byte) pair now has a defined next state.
+            if (s == -1) { // No transition from pattern r to byte c
+                // Fill the "goto" by following r's failure link
+                // This turns the sparse trie into a complete DFA:
+                // every (state, byte) pair now has a defined next state.
                 ac->states[r].goto_table[c] = ac->states[ac->states[r].failure].goto_table[c];
                 continue;
             }
@@ -137,17 +135,13 @@ static void build_failure_links(ACAutomaton *ac)
             queue[tail++] = s;
 
             int f = ac->states[r].failure;
-            //Follow failure links until we find a valid transition for c
-            //we don't need a loop here because the DFA completion above
-            // ensures ac->states[f].goto_table[c] is always valid.) 
+            // Follow failure links until we find a valid transition for c
+            // (DFA completion above ensures ac->states[f].goto_table[c] is always valid)
             ac->states[s].failure = ac->states[f].goto_table[c];
 
             /*
              * Propagate output: if the failure-target state has output,
              * append its output chain to s's output chain.
-             * This handles the case where a shorter pattern is a suffix
-             * of a longer one (e.g. patterns "he" and "she": when we
-             * match "she" we must also report "he").
              */
             if (ac->states[ac->states[s].failure].output != -1) {
                 /*
@@ -174,7 +168,7 @@ static void build_failure_links(ACAutomaton *ac)
 
 /* AC functions */
 
-//Initialize the automaton, requires patterns and their number
+// Initializes the automaton, requires patterns and their number.
 ACAutomaton *ac_build(const char **patterns, int num_patterns)
 {
     ACAutomaton *ac = (ACAutomaton *)calloc(1, sizeof(ACAutomaton));
@@ -210,15 +204,15 @@ ACAutomaton *ac_build(const char **patterns, int num_patterns)
     return ac;
 }
 
-
-/*  This function is fully thread-safe:
-    - ac is read-only (const pointer)
-    - the only mutable state is `cur` (current automaton state) which lives
-      on the caller's stack
-    - ACMatchList is allocated on the heap but owned entirely by the caller
- 
-Multiple OpenMP threads can call ac_scan() concurrently on the same ACAutomaton* without any locks.
+/* Thread-safety assumption: 
+ * - `ac` is read-only (const pointer)
+ * - the only mutable state is `cur` (current automaton state),
+ *   which lives on the caller's stack and is thread-local.
+ * - ACMatchList is allocated on the heap but owned entirely by the caller.
+ * Multiple OpenMP threads can call ac_scan() concurrently on the same
+ * ACAutomaton* without any locks.
  */
+// Scans data using the automaton and returns a list of matches.
 ACMatchList ac_scan(const ACAutomaton *ac, const uint8_t *data, size_t len)
 {
     ACMatchList ml;
@@ -269,8 +263,7 @@ ACMatchList ac_scan(const ACAutomaton *ac, const uint8_t *data, size_t len)
     return ml;
 }
 
-
-// Cleanup functions
+// Frees the matches list.
 void ac_free_matches(ACMatchList *ml)
 {
     if (ml && ml->matches) {
@@ -281,6 +274,7 @@ void ac_free_matches(ACMatchList *ml)
     }
 }
 
+// Frees the automaton.
 void ac_free(ACAutomaton *ac)
 {
     if (!ac) return;
@@ -292,6 +286,7 @@ void ac_free(ACAutomaton *ac)
     free(ac);
 }
 
+// Initializes the match list with an initial capacity.
 void ac_matchlist_init(ACMatchList *ml, int initial_capacity)
 {
     if (initial_capacity <= 0) initial_capacity = 16;
@@ -301,6 +296,7 @@ void ac_matchlist_init(ACMatchList *ml, int initial_capacity)
     if (!ml->matches) ml->capacity = 0; // caller should check before use
 }
 
+// Scans data using the automaton and populates an existing match list.
 void ac_scan_into(const ACAutomaton *ac, const uint8_t *data, size_t len, ACMatchList *ml)
 {
     ml->count = 0; // reuse existing buffer — no malloc/free here
