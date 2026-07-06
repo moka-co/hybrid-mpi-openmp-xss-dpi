@@ -16,7 +16,7 @@ def plot_packet_size_distribution(sizes, output_dir):
     plt.close()
     print(f"Saved packet_size_distribution.png")
 
-def print_dataset_statistics(output_dir, file_path='../datasets/packets.txt'):
+def print_dataset_statistics(output_dir, file_path='datasets/packets.txt'):
     print(f"\n--- Dataset Statistics: {file_path} ---")
     if not os.path.exists(file_path):
         print("Dataset file not found.")
