@@ -17,7 +17,7 @@ export OMP_SCHEDULE=$STRATEGY
 
 echo "=== Run: nodes=$SLURM_JOB_NUM_NODES np=$NP threads=$OMP_NUM_THREADS strategy=$STRATEGY rep=$REP ==="
 
-mpirun -np $NP --map-by node -wdir /shared/hybrid-mpi-openmp-xss-dpi \
+mpirun -np $NP --map-by node -wdir /shared/ \
   ./tests/benchmarks/benchmark_ac_pt \
   --strategy $STRATEGY \
   --omp-threads $OMP_NUM_THREADS \

@@ -132,10 +132,13 @@ int main(int argc, char *argv[])
     uint64_t total_matches = 0;
     #pragma omp parallel reduction(+:total_matches)
     {
+        //Match list is allocated once per thread
         ACMatchList ml;
         ac_matchlist_init(&ml, 16);
+
         #pragma omp for schedule(runtime)
         for (int i = 0; i < packets_per_proc; i++) {
+            // Safe concurrent access since ac is completely read-only
             ac_scan_into(ac, my_packets[i].data, my_packets[i].len, &ml);
             total_matches += ml.count;
         }
