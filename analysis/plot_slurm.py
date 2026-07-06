@@ -5,6 +5,51 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import re
 
+def plot_packet_size_distribution(sizes, output_dir):
+    plt.figure(figsize=(10, 6))
+    sns.histplot(sizes, bins=50, kde=True)
+    plt.title("Packet Size Distribution")
+    plt.xlabel("Packet Size (bytes)")
+    plt.ylabel("Frequency")
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, 'packet_size_distribution.png'), dpi=300)
+    plt.close()
+    print(f"Saved packet_size_distribution.png")
+
+def print_dataset_statistics(output_dir, file_path='../datasets/packets.txt'):
+    print(f"\n--- Dataset Statistics: {file_path} ---")
+    if not os.path.exists(file_path):
+        print("Dataset file not found.")
+        return
+
+    sizes = []
+    malicious = 0
+    total = 0
+    
+    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            parts = line.split('|')
+            if len(parts) >= 2:
+                try:
+                    total += 1
+                    if parts[0] == '1':
+                        malicious += 1
+                    sizes.append(int(parts[1]))
+                except ValueError:
+                    continue
+                    
+    if total > 0:
+        print(f"Total packets: {total}")
+        print(f"Malicious packets: {malicious} ({malicious/total*100:.2f}%)")
+        print(f"Benign packets: {total - malicious} ({(total - malicious)/total*100:.2f}%)")
+        print(f"Average size: {sum(sizes)/total:.2f} bytes")
+        print(f"Max size: {max(sizes)} bytes")
+        print(f"Min size: {min(sizes)} bytes")
+        plot_packet_size_distribution(sizes, output_dir)
+    else:
+        print("Dataset is empty.")
+    print("-------------------------------------------\n")
+
 # Reuse the plotting functions from analysis/plot.py
 def plot_speedup(df, output_dir, scheduler):
     scheduler_df = df[df['scheduler'] == scheduler]
@@ -144,6 +189,7 @@ if __name__ == "__main__":
     output_dir = 'plots/plots_slurm'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+    print_dataset_statistics(output_dir)
     
     df = load_data(results_dir)
     if not df.empty:
