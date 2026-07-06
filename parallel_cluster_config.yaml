@@ -4,7 +4,7 @@ Image:
 HeadNode:
   InstanceType: c6i.2xlarge         # Manage jobs without paying for massive idle hardware
   Networking:
-    SubnetId: subnet-xxxxx    # Put your specific VPC subnet ID here
+    SubnetId: subnet-0f798c95e50812c9f    # Put your specific VPC subnet ID here
     ElasticIp: true
   Ssh:
     KeyName: hpc_id       # The EC2 key pair used to log in via terminal
@@ -16,12 +16,12 @@ Scheduling:
         - Name: hpc-nodes
           InstanceType: c6in.2xlarge # 32 physical cores per node—excellent for OpenMP scale
           MinCount: 0                # Dynamically scales down to 0 to save money when idle
-          MaxCount: 4                # Scales up to 4 nodes (128 total cores) under load
+          MaxCount: 8                # Scales up to 8 nodes
           Efa:
             Enabled: false            
       Networking:
         SubnetIds:
-          - subnet-xxxx # Private subnet, different from the other one, routes via NAT gateway
+          - subnet-064d66e2a98972768 # Private subnet, different from the other one, routes via NAT gateway
         PlacementGroup:
           Enabled: true              # Forces nodes physically close together in the data center
 SharedStorage:

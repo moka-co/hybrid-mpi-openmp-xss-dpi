@@ -201,9 +201,16 @@ int main(int argc, char *argv[])
 
         // Print to stdout
         printf("%s\n", json_buffer);
+        // Generate a 6-character random alphanumeric string
+        char rand_str[7];
+        const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        for (int i = 0; i < 6; i++) {
+            rand_str[i] = charset[rand() % (sizeof(charset) - 1)];
+        }
+        rand_str[6] = '\0';
 
         // Save to file
-        char filename[64];
+        char filename[128];
         snprintf(filename, sizeof(filename), "results/benchmark_ac_p%d_t%d_%s.json", size, num_threads, scheduler_safe);
         FILE *f = fopen(filename, "w");
         if (f) {
