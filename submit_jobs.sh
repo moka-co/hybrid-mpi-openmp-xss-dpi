@@ -28,7 +28,8 @@ declare -a CONFIGS=(
 
 for CONFIG in "${CONFIGS[@]}"; do
   read -r NODES NTASKS_PER_NODE CPUS_PER_TASK TOTAL_CORES <<< "$CONFIG"
-  NP=$NODES   # one MPI rank per node
+  NUM_PROCESS=$NODES   # one MPI rank per node
+  NUM_THREADS=$CPUS_PER_TASK
 
   for STRATEGY in "${SCHEDULERS[@]}"; do
     for REP in $(seq 1 $REPS); do
@@ -37,7 +38,7 @@ for CONFIG in "${CONFIGS[@]}"; do
         --ntasks=$NODES \
         --ntasks-per-node=$NTASKS_PER_NODE \
         --cpus-per-task=$CPUS_PER_TASK \
-        --export=ALL,NP=$NP,STRATEGY=$STRATEGY,REP=$REP \
+        --export=ALL,NUM_PROCESS=$NUM_PROCESS,NUM_THREADS=$NUM_THREADS,STRATEGY=$STRATEGY,REP=$REP \
         benchmark.slurm
       sleep 1   # small stagger to avoid hammering the scheduler
     done
