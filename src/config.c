@@ -31,7 +31,7 @@ void init_default_config(Config *cfg) {
     
     // Set default execution parameters
     cfg->num_mpi_ranks = 1;
-    cfg->num_omp_threads = 4;              // 4 OpenMP threads default
+    cfg->num_omp_threads = 0;              // 0 means use runtime default
     strncpy(cfg->strategy_type, "all", sizeof(cfg->strategy_type) - 1);
     strncpy(cfg->schedule_type, "static", sizeof(cfg->schedule_type) - 1);
     cfg->schedule_chunk = 0;               // 0 means default chunk sizing

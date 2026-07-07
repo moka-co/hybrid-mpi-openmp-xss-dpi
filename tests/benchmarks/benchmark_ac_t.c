@@ -41,8 +41,16 @@ int main(int argc, char *argv[])
 {
     Config cfg;
     // Note: Use command-line arguments to override defaults (e.g., --num-packets <num>)
+    int threads_provided = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--omp-threads") == 0 || strcmp(argv[i], "-t") == 0) {
+            threads_provided = 1;
+            break;
+        }
+    }
     init_default_config(&cfg);
     parse_arguments(argc, argv, &cfg);
+    if (threads_provided) omp_set_num_threads(cfg.num_omp_threads);
 
     printf("Pattern Matching Multithreaded Performance Baseline (OpenMP)\n\n");
     print_config(&cfg);

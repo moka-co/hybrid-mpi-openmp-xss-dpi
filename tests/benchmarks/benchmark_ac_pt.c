@@ -31,13 +31,21 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
     Config cfg;
+    // Note: Use command-line arguments to override defaults (e.g., --num-packets <num>)
+    int threads_provided = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--omp-threads") == 0 || strcmp(argv[i], "-t") == 0) {
+            threads_provided = 1;
+            break;
+        }
+    }
     if (rank == MASTER_RANK) {
-        // Note: Use command-line arguments to override defaults (e.g., --num-packets <num>)
         init_default_config(&cfg);
         parse_arguments(argc, argv, &cfg);
         cfg.num_mpi_ranks = size;
     }
     MPI_Bcast(&cfg, sizeof(Config), MPI_BYTE, MASTER_RANK, MPI_COMM_WORLD);
+    if (threads_provided) omp_set_num_threads(cfg.num_omp_threads);
 
     int num_patterns = 0;
     char **patterns = NULL;
