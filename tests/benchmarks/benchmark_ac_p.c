@@ -29,6 +29,7 @@ int main(int argc, char *argv[])
 
     Config cfg;
     if (rank == MASTER_RANK) {
+        // Note: Use command-line arguments to override defaults (e.g., --num-packets <num>)
         init_default_config(&cfg);
         parse_arguments(argc, argv, &cfg);
         cfg.num_mpi_ranks = size;

@@ -36,6 +36,7 @@ static double get_time_sec(void)
 int main(int argc, char *argv[])
 {
     // Initialize configuration
+    // Note: Use command-line arguments to override defaults (e.g., --num-packets <num>)
     Config cfg;
     init_default_config(&cfg);
     parse_arguments(argc, argv, &cfg);
