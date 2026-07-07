@@ -16,7 +16,12 @@ The core objective is to achieve efficient parallelization of the Aho-Corasick s
 ./
 ├── README.md
 ├── Makefile
-├── run_experiments.py
+├── scripts/
+│   ├── benchmark.slurm
+│   ├── example_benchmark.slurm
+│   ├── run_benchmark_packet_size_comparison.py
+│   ├── run_experiments.py
+│   └── submit_jobs.sh
 ├── src/
 │   ├── config.c
 │   ├── config.h
@@ -29,6 +34,7 @@ The core objective is to achieve efficient parallelization of the Aho-Corasick s
 │   └── performance.h
 ├── analysis/
 │   ├── plot.py
+│   ├── plot_benchmark.py
 │   └── plots/
 ├── results/
 └── tests/
@@ -59,14 +65,19 @@ make validate
 ### Local
 Experiments can be run automatically using the provided Python script:
 ```bash
-python3 run_experiments.py
+python3 scripts/run_experiments.py
 ```
-Results are saved to the `results/` directory.
+To run the automated scaling benchmarks and generate a plot (requires `matplotlib`):
+```bash
+python3 scripts/run_benchmark_packet_size_comparison.py
+python3 analysis/plot_benchmark.py
+```
+Results are saved to the `results/` directory, and the plot is saved under `analysis/plots/`.
 
 ### SLURM Cluster
 For cluster environments, use the provided Bash scripts to submit batch jobs to the scheduler:
 ```bash
-sbatch submit_jobs.sh
+sbatch scripts/submit_jobs.sh
 ```
 
 ## Generating Plots
