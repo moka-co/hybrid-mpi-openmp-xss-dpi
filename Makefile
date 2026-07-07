@@ -13,6 +13,7 @@ PATTERNS = datasets/patterns.txt
 # Number of threads for multithreaded benchmarks
 NUM_THREADS = 4
 NUM_PROCESS = 2
+PACKETS = 1000000
 
 # Run configuration variables
 STRATEGY = all
@@ -81,20 +82,20 @@ test_config: $(TEST_CONFIG)
 
 # Benchmark targets
 benchmark: $(BENCH_BIN)
-	@echo "Running performance benchmark..."
-	./$(BENCH_BIN)
+	@echo "Running performance benchmark with $(PACKETS) packets..."
+	./$(BENCH_BIN) --num-packets $(PACKETS)
 
 benchmark_t: $(BENCH_BIN_T)
-	@echo "Running multithreaded performance benchmark with $(NUM_THREADS) threads..."
-	OMP_NUM_THREADS=$(NUM_THREADS) ./$(BENCH_BIN_T)
+	@echo "Running multithreaded performance benchmark with $(THREADS) threads and $(PACKETS) packets..."
+	OMP_NUM_THREADS=$(NUM_THREADS) ./$(BENCH_BIN_T) --num-packets $(PACKETS) --omp-threads $(THREADS)
 
 benchmark_p: $(BENCH_BIN_P)
-	@echo "Running MPI performance benchmark..."
-	mpirun -np $(NUM_PROCESS) ./$(BENCH_BIN_P)
+	@echo "Running MPI performance benchmark with $(NP) ranks and $(PACKETS) packets..."
+	mpirun -np $(NP) ./$(BENCH_BIN_P) --num-packets $(PACKETS)
 
 benchmark_pt: $(BENCH_BIN_PT)
-	@echo "Running Hybrid MPI+OpenMP performance benchmark with $(NUM_PROCESS) processes and $(NUM_THREADS) threads per rank..."
-	mpirun -np $(NUM_PROCESS) -x OMP_NUM_THREADS=$(NUM_THREADS) ./$(BENCH_BIN_PT)
+	@echo "Running Hybrid MPI+OpenMP performance benchmark with $(NP) processes, $(NUM_THREADS) threads per rank, and $(PACKETS) packets..."
+	mpirun -np $(NP) -x OMP_NUM_THREADS=$(NUM_THREADS) ./$(BENCH_BIN_PT) --num-packets $(PACKETS) --omp-threads $(NUM_THREADS)
 
 
 validate: $(VALIDATE_BIN)
