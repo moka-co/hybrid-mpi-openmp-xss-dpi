@@ -7,7 +7,6 @@
 typedef struct {
     uint64_t dataset_size;        // Total dataset size in bytes
     uint32_t packet_count;        // Number of packets in dataset
-    char dataset_file[256];       // Path to binary packet dataset (see dataset.h)
     char pattern_file[256];       // Path to signature pattern file
     uint32_t num_patterns;        // Number of patterns loaded
     uint32_t num_mpi_ranks;       // Number of MPI ranks (if MPI enabled)

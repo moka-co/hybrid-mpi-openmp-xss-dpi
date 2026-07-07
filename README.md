@@ -50,6 +50,11 @@ make benchmark_p NUM_PROCESS=2
 make benchmark_pt NUM_PROCESS=2 NUM_THREADS=4
 ```
 
+You can see useful statistics about the XSS detection by running:
+```bash
+make validate
+```
+
 ## Experimental Reproductions
 ### Local
 Experiments can be run automatically using the provided Python script:

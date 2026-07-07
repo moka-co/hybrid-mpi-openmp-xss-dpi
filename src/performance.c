@@ -19,7 +19,6 @@ void compute_metrics(PerformanceMetrics *metrics, double exec_time, long bytes_s
  */
 void print_performance_report(const Config *cfg, const char *strategy_name, const PerformanceMetrics *metrics, int num_workers) {
     printf("\n=== Performance Report (%s) ===\n", strategy_name);
-    printf("  Dataset File:           %s\n", cfg->dataset_file);
     printf("  Loaded Signatures Count:%u\n", cfg->num_patterns);
     printf("  Number of Workers:      %d\n", num_workers);
     printf("  Execution Time:         %f s\n", metrics->exec_time);
@@ -54,17 +53,16 @@ void export_metrics_to_csv(const Config *cfg, int num_ranks, const PerformanceMe
     
     if (csv) {
         if (!file_exists) {
-            fprintf(csv, "mpi_ranks,omp_threads,b_schedule_type,b_schedule_chunk,dataset_file,global_packets,"
+            fprintf(csv, "mpi_ranks,omp_threads,b_schedule_type,b_schedule_chunk,global_packets,"
                          "seq_time,seq_throughput_mbs,seq_speedup,seq_efficiency,"
                          "a_time,a_throughput_mbs,a_speedup,a_efficiency,"
                          "b_time,b_throughput_mbs,b_speedup,b_efficiency\n");
         }
-        fprintf(csv, "%d,%u,%s,%u,%s,%u,"
+        fprintf(csv, "%d,%u,%s,%u,%u,"
                      "%f,%f,%f,%f,"
                      "%f,%f,%f,%f,"
                      "%f,%f,%f,%f\n",
-                num_ranks, cfg->num_omp_threads, cfg->schedule_type, cfg->schedule_chunk,
-                cfg->dataset_file, cfg->packet_count,
+                num_ranks, cfg->num_omp_threads, cfg->schedule_type, cfg->schedule_chunk, cfg->packet_count,
                 metrics_seq->exec_time, metrics_seq->throughput_mb_s, metrics_seq->speedup, metrics_seq->efficiency,
                 metrics_a->exec_time, metrics_a->throughput_mb_s, metrics_a->speedup, metrics_a->efficiency,
                 metrics_b->exec_time, metrics_b->throughput_mb_s, metrics_b->speedup, metrics_b->efficiency);
