@@ -13,6 +13,7 @@
 #include <string.h>
 #include <time.h>
 #include "../../src/pattern_matching.h"
+#include "../../src/config.h"
 
 // Simple random number generator (seeded) for reproducibility
 static uint32_t rng_state = 42;
@@ -109,12 +110,18 @@ static char **load_patterns_from_file(const char *filepath, int *out_count)
  */
 int main(int argc, char *argv[])
 {
+    // Initialize configuration
+    Config cfg;
+    init_default_config(&cfg);
+    parse_arguments(argc, argv, &cfg);
+
     printf("Pattern Matching Single-Threaded Performance Baseline\n\n");
+    print_config(&cfg);
 
     // Load patterns from file
-    printf("Loading XSS patterns from file...\n");
+    printf("Loading XSS patterns from file: %s...\n", cfg.pattern_file);
     int num_patterns = 0;
-    char **patterns = load_patterns_from_file("datasets-private/string_xss_only.txt",
+    char **patterns = load_patterns_from_file(cfg.pattern_file,
                                               &num_patterns);
 
     if (!patterns || num_patterns == 0) {
@@ -139,22 +146,21 @@ int main(int argc, char *argv[])
     printf("  Build time: %.6f sec\n\n", build_end - build_start);
 
     // Generate test packets
-    printf("Generating 1,000,000 synthetic packets...\n");
-    int num_packets = 1000000;
-    uint8_t **packets = (uint8_t **)malloc(num_packets * sizeof(uint8_t *));
-    size_t *packet_lens = (size_t *)malloc(num_packets * sizeof(size_t));
+    printf("Generating %d synthetic packets...\n", cfg.packet_count);
+    uint8_t **packets = (uint8_t **)malloc(cfg.packet_count * sizeof(uint8_t *));
+    size_t *packet_lens = (size_t *)malloc(cfg.packet_count * sizeof(size_t));
     size_t total_bytes = 0;
 
-    for (int i = 0; i < num_packets; i++) {
+    for (int i = 0; i < cfg.packet_count; i++) {
         packets[i] = gen_random_packet(64, 8192, &packet_lens[i]);
         total_bytes += packet_lens[i];
     }
 
-    printf("  Packet count: %d\n", num_packets);
+    printf("  Packet count: %d\n", cfg.packet_count);
     printf("  Total bytes: %.2f MB\n", (double)total_bytes / 1e6);
-    printf("  Average packet size: %.1f bytes\n", (double)total_bytes / num_packets);
+    printf("  Average packet size: %.1f bytes\n", (double)total_bytes / cfg.packet_count);
     printf("  Min/Max packet size: %zu / %zu bytes\n\n",
-           packet_lens[0], packet_lens[num_packets - 1]);
+           packet_lens[0], packet_lens[cfg.packet_count - 1]);
 
     // Scan all packets and time it
     printf("Scanning packets (measuring time)...\n");
@@ -162,7 +168,7 @@ int main(int argc, char *argv[])
     double scan_start = get_time_sec();
     uint64_t total_matches = 0;
 
-    for (int i = 0; i < num_packets; i++) {
+    for (int i = 0; i < cfg.packet_count; i++) {
         ACMatchList ml = ac_scan(ac, packets[i], packet_lens[i]);
         total_matches += ml.count;
         ac_free_matches(&ml);
@@ -176,8 +182,8 @@ int main(int argc, char *argv[])
 
     // Compute metrics
     double throughput_mb_per_sec = (double)total_bytes / 1e6 / scan_time;
-    double packets_per_sec = (double)num_packets / scan_time;
-    double avg_time_per_packet_us = (scan_time / num_packets) * 1e6;
+    double packets_per_sec = (double)cfg.packet_count / scan_time;
+    double avg_time_per_packet_us = (scan_time / cfg.packet_count) * 1e6;
     double avg_time_per_byte_ns = (scan_time / total_bytes) * 1e9;
 
     // Generate JSON
@@ -209,7 +215,7 @@ int main(int argc, char *argv[])
         "    \"goto_table_size_bytes\": %zu\n"
         "  }\n"
         "}",
-        num_patterns, ac->num_states, num_packets, (double)total_bytes / 1e6, (double)total_bytes / num_packets,
+        num_patterns, ac->num_states, cfg.packet_count, (double)total_bytes / 1e6, (double)total_bytes / cfg.packet_count,
         scan_time, total_matches, throughput_mb_per_sec, packets_per_sec, avg_time_per_packet_us, avg_time_per_byte_ns,
         ac->num_states, (double)total_bytes / ac->num_states, sizeof(ACState), AC_ALPHABET_SIZE * sizeof(int));
 
@@ -217,14 +223,14 @@ int main(int argc, char *argv[])
     printf("%s\n", json_buffer);
 
     // Save to file
-    FILE *f = fopen("results/benchmark_ac_static.json", "w");
+    FILE *f = fopen(cfg.output_file, "w");
     if (f) {
         fprintf(f, "%s\n", json_buffer);
         fclose(f);
     }
 
     // Cleanup
-    for (int i = 0; i < num_packets; i++)
+    for (int i = 0; i < cfg.packet_count; i++)
         free(packets[i]);
     free(packets);
     free(packet_lens);

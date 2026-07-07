@@ -13,6 +13,7 @@
 #include <time.h>
 #include <omp.h>
 #include "../../src/pattern_matching.h"
+#include "../../src/config.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -113,12 +114,17 @@ static char **load_patterns_from_file(const char *filepath, int *out_count)
  */
 int main(int argc, char *argv[])
 {
+    Config cfg;
+    init_default_config(&cfg);
+    parse_arguments(argc, argv, &cfg);
+
     printf("Pattern Matching Multithreaded Performance Baseline (OpenMP)\n\n");
+    print_config(&cfg);
 
     // Load patterns from file
-    printf("Loading XSS patterns from file...\n");
+    printf("Loading XSS patterns from file: %s...\n", cfg.pattern_file);
     int num_patterns = 0;
-    char **patterns = load_patterns_from_file("datasets-private/string_xss_only.txt",
+    char **patterns = load_patterns_from_file(cfg.pattern_file,
                                               &num_patterns);
 
     if (!patterns || num_patterns == 0) {
@@ -143,22 +149,21 @@ int main(int argc, char *argv[])
     printf("  Build time: %.6f sec\n\n", build_end - build_start);
 
     // Generate test packets
-    printf("Generating 1,000,000 synthetic packets...\n");
-    int num_packets = 1000000;
-    uint8_t **packets = (uint8_t **)malloc(num_packets * sizeof(uint8_t *));
-    size_t *packet_lens = (size_t *)malloc(num_packets * sizeof(size_t));
+    printf("Generating %d synthetic packets...\n", cfg.packet_count);
+    uint8_t **packets = (uint8_t **)malloc(cfg.packet_count * sizeof(uint8_t *));
+    size_t *packet_lens = (size_t *)malloc(cfg.packet_count * sizeof(size_t));
     size_t total_bytes = 0;
 
-    for (int i = 0; i < num_packets; i++) {
+    for (int i = 0; i < cfg.packet_count; i++) {
         packets[i] = gen_random_packet(64, 8192, &packet_lens[i]);
         total_bytes += packet_lens[i];
     }
 
-    printf("  Packet count: %d\n", num_packets);
+    printf("  Packet count: %d\n", cfg.packet_count);
     printf("  Total bytes: %.2f MB\n", (double)total_bytes / 1e6);
-    printf("  Average packet size: %.1f bytes\n", (double)total_bytes / num_packets);
+    printf("  Average packet size: %.1f bytes\n", (double)total_bytes / cfg.packet_count);
     printf("  Min/Max packet size: %zu / %zu bytes\n\n",
-           packet_lens[0], packet_lens[num_packets - 1]);
+           packet_lens[0], packet_lens[cfg.packet_count - 1]);
 
     // Scan all packets and time it
     printf("Scanning packets with OpenMP (measuring time)...\n");
@@ -174,7 +179,7 @@ int main(int argc, char *argv[])
         ac_matchlist_init(&ml, 16);
 
         #pragma omp for schedule(runtime) reduction(+:total_matches)
-        for (int i = 0; i < num_packets; i++) {
+        for (int i = 0; i < cfg.packet_count; i++) {
             ac_scan_into(ac, packets[i], packet_lens[i], &ml);
             total_matches += ml.count;
         }
@@ -190,23 +195,13 @@ int main(int argc, char *argv[])
 
     // Compute metrics
     double throughput_mb_per_sec = (double)total_bytes / 1e6 / scan_time;
-    double packets_per_sec = (double)num_packets / scan_time;
-    double avg_time_per_packet_us = (scan_time / num_packets) * 1e6;
+    double packets_per_sec = (double)cfg.packet_count / scan_time;
+    double avg_time_per_packet_us = (scan_time / cfg.packet_count) * 1e6;
     double avg_time_per_byte_ns = (scan_time / total_bytes) * 1e9;
 
     // Generate JSON
     char json_buffer[4096];
-    int num_threads = omp_get_max_threads();
-    char *omp_sched = getenv("OMP_SCHEDULE");
-    const char *scheduler = omp_sched ? omp_sched : "static";
     
-    char scheduler_safe[64];
-    strncpy(scheduler_safe, scheduler, sizeof(scheduler_safe) - 1);
-    scheduler_safe[sizeof(scheduler_safe) - 1] = '\0';
-    for (int i = 0; scheduler_safe[i]; i++) {
-        if (scheduler_safe[i] == ',') scheduler_safe[i] = '_';
-    }
-
     int len = snprintf(json_buffer, sizeof(json_buffer),
         "{\n"
         "  \"Configuration\": {\n"
@@ -234,7 +229,7 @@ int main(int argc, char *argv[])
         "    \"goto_table_size_bytes\": %zu\n"
         "  }\n"
         "}",
-        num_patterns, ac->num_states, num_packets, (double)total_bytes / 1e6, (double)total_bytes / num_packets, num_threads, scheduler,
+        num_patterns, ac->num_states, cfg.packet_count, (double)total_bytes / 1e6, (double)total_bytes / cfg.packet_count, cfg.num_omp_threads, cfg.schedule_type,
         scan_time, total_matches, throughput_mb_per_sec, packets_per_sec, avg_time_per_packet_us, avg_time_per_byte_ns,
         ac->num_states, (double)total_bytes / ac->num_states, sizeof(ACState), AC_ALPHABET_SIZE * sizeof(int));
 
@@ -242,16 +237,14 @@ int main(int argc, char *argv[])
     printf("%s\n", json_buffer);
 
     // Save to file
-    char filename[64];
-    snprintf(filename, sizeof(filename), "results/benchmark_ac_t%d_%s.json", num_threads, scheduler_safe);
-    FILE *f = fopen(filename, "w");
+    FILE *f = fopen(cfg.output_file, "w");
     if (f) {
         fprintf(f, "%s\n", json_buffer);
         fclose(f);
     }
 
     // Cleanup
-    for (int i = 0; i < num_packets; i++)
+    for (int i = 0; i < cfg.packet_count; i++)
         free(packets[i]);
     free(packets);
     free(packet_lens);
@@ -265,3 +258,4 @@ int main(int argc, char *argv[])
     printf("=== Benchmark Complete ===\n");
     return 0;
 }
+

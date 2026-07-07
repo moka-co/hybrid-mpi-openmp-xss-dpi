@@ -14,6 +14,7 @@
 #include <omp.h>
 #include "../../src/pattern_matching.h"
 #include "../../src/dataset.h"
+#include "../../src/config.h"
 
 #define MASTER_RANK 0
 
@@ -58,6 +59,14 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
+    Config cfg;
+    if (rank == MASTER_RANK) {
+        init_default_config(&cfg);
+        parse_arguments(argc, argv, &cfg);
+        cfg.num_mpi_ranks = size;
+    }
+    MPI_Bcast(&cfg, sizeof(Config), MPI_BYTE, MASTER_RANK, MPI_COMM_WORLD);
+
     int num_patterns = 0;
     char **patterns = NULL;
     ACAutomaton *ac = NULL;
@@ -65,8 +74,8 @@ int main(int argc, char *argv[])
 
     // 1. Rank MASTER_RANK builds automaton and broadcasts it
     if (rank == MASTER_RANK) {
-        printf("Rank %d: Building automaton...\n", MASTER_RANK);
-        patterns = load_patterns_from_file("datasets-private/string_xss_only.txt", &num_patterns);
+        printf("Rank %d: Building automaton (patterns: %s)...\n", MASTER_RANK, cfg.pattern_file);
+        patterns = load_patterns_from_file(cfg.pattern_file, &num_patterns);
         ac = ac_build((const char **)patterns, num_patterns);
         num_states = ac->num_states;
         capacity = ac->capacity;
@@ -106,7 +115,7 @@ int main(int argc, char *argv[])
 
     // 2. Rank MASTER_RANK generates and distributes packets
     printf("Rank %d: Distributing packets...\n", rank);
-    int total_packets = 1000000;
+    int total_packets = (int)cfg.packet_count;
     total_packets -= (total_packets % size);
     int packets_per_proc = total_packets / size;
     Packet *my_packets = (Packet *)malloc(packets_per_proc * sizeof(Packet));
@@ -213,7 +222,7 @@ int main(int argc, char *argv[])
             "    \"goto_table_size_bytes\": %zu\n"
             "  }\n"
             "}",
-            num_patterns, num_states, total_packets, total_bytes / 1e6, 1024.0, size, num_threads, scheduler,
+            num_patterns, num_states, total_packets, total_bytes / 1e6, 1024.0, cfg.num_mpi_ranks, cfg.num_omp_threads, cfg.strategy_type,
             scan_time, global_total_matches, throughput_mb_per_sec, packets_per_sec, avg_time_per_packet_us, avg_time_per_byte_ns,
             num_states, total_bytes / num_states, sizeof(ACState), AC_ALPHABET_SIZE * sizeof(int));
 
