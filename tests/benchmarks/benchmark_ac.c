@@ -12,34 +12,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include "../../src/dataset.h"
 #include "../../src/pattern_matching.h"
 #include "../../src/config.h"
-
-// Simple random number generator (seeded) for reproducibility
-static uint32_t rng_state = 42;
-
-/**
- * Returns a pseudo-random 32-bit unsigned integer.
- */
-static uint32_t rand_u32(void)
-{
-    rng_state = rng_state * 1103515245 + 12345;
-    return (rng_state / 65536) % 32768;
-}
-
-/**
- * Generates a synthetic packet of random length, filled with random bytes.
- */
-static uint8_t *gen_random_packet(size_t min_len, size_t max_len, size_t *out_len)
-{
-    size_t len = min_len + (rand_u32() % (max_len - min_len + 1));
-    uint8_t *pkt = (uint8_t *)malloc(len);
-    for (size_t i = 0; i < len; i++) {
-        pkt[i] = (uint8_t)(rand_u32() & 0xFF);
-    }
-    *out_len = len;
-    return pkt;
-}
 
 /**
  * Returns the current time in seconds, platform-dependent.
@@ -147,20 +122,23 @@ int main(int argc, char *argv[])
 
     // Generate test packets
     printf("Generating %d synthetic packets...\n", cfg.packet_count);
-    uint8_t **packets = (uint8_t **)malloc(cfg.packet_count * sizeof(uint8_t *));
-    size_t *packet_lens = (size_t *)malloc(cfg.packet_count * sizeof(size_t));
-    size_t total_bytes = 0;
+    LengthDistParams lp = { .mu = 7.0, .sigma = 1.0, .min_len = 64, .max_len = 8192 };
+    Packet *packets = generate_packets(cfg.packet_count, 42, lp, 0.5, (const char **)patterns, num_patterns);
+    if (!packets) {
+        fprintf(stderr, "ERROR: Failed to generate packets\n");
+        return 1;
+    }
 
+    size_t total_bytes = 0;
     for (int i = 0; i < cfg.packet_count; i++) {
-        packets[i] = gen_random_packet(64, 8192, &packet_lens[i]);
-        total_bytes += packet_lens[i];
+        total_bytes += packets[i].len;
     }
 
     printf("  Packet count: %d\n", cfg.packet_count);
     printf("  Total bytes: %.2f MB\n", (double)total_bytes / 1e6);
     printf("  Average packet size: %.1f bytes\n", (double)total_bytes / cfg.packet_count);
-    printf("  Min/Max packet size: %zu / %zu bytes\n\n",
-           packet_lens[0], packet_lens[cfg.packet_count - 1]);
+    printf("  Min/Max packet size (first/last): %zu / %zu bytes\n\n",
+           packets[0].len, packets[cfg.packet_count - 1].len);
 
     // Scan all packets and time it
     printf("Scanning packets (measuring time)...\n");
@@ -169,7 +147,7 @@ int main(int argc, char *argv[])
     uint64_t total_matches = 0;
 
     for (int i = 0; i < cfg.packet_count; i++) {
-        ACMatchList ml = ac_scan(ac, packets[i], packet_lens[i]);
+        ACMatchList ml = ac_scan(ac, packets[i].data, packets[i].len);
         total_matches += ml.count;
         ac_free_matches(&ml);
     }
@@ -230,10 +208,7 @@ int main(int argc, char *argv[])
     }
 
     // Cleanup
-    for (int i = 0; i < cfg.packet_count; i++)
-        free(packets[i]);
-    free(packets);
-    free(packet_lens);
+    free_packets(packets, cfg.packet_count);
 
     for (int i = 0; i < num_patterns; i++)
         free(patterns[i]);
