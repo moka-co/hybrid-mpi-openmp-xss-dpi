@@ -6,7 +6,7 @@
 #include <string.h>
 
 #define AC_ALPHABET_SIZE 256   /* one entry per possible byte value */
-#define AC_MAX_STATES   8156  /* max nodes in the trie; */
+#define AC_MAX_STATES   16384  /* max nodes in the trie; */
 
 // Aho-Corasick automaton / Trie implementation
 
