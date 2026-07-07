@@ -5,10 +5,6 @@ LDFLAGS = -fopenmp -lm
 
 # Source files
 CORE_SRC = src/pattern_matching.c src/dataset.c src/config.c src/performance.c
-MAIN_SRC = src/dpi_engine.c
-# Corrected: Binary names should not have .o extension
-MAIN_BIN = dpi_engine
-OBJ_MAIN = src/dpi_engine.o
 
 # Dataset used by the run* targets below.
 DATASET = datasets/packets.txt
@@ -35,17 +31,11 @@ BENCH_BIN_PT = tests/benchmarks/benchmark_ac_pt
 VALIDATE_BIN = tests/validate_dataset
 CSIC_BIN     = tests/generate_csic_dataset
 
-.PHONY: all clean test test_basic test_file test_config benchmark benchmark_t benchmark_p benchmark_pt validate csic_dataset run
+.PHONY: all clean test test_basic test_file test_config benchmark benchmark_t benchmark_p benchmark_pt validate csic_dataset
 
-all: $(MAIN_BIN) $(OBJ_MAIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
+all: $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
 
 # Build rules
-$(MAIN_BIN): $(MAIN_SRC) $(CORE_SRC)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(OBJ_MAIN): $(MAIN_SRC)
-	$(CC) $(CFLAGS) -c $< -o $@
-
 $(TEST_BIN_1): tests/test_ac.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -73,29 +63,6 @@ $(VALIDATE_BIN): tests/validate_dataset.c $(CORE_SRC)
 $(CSIC_BIN): tests/generate_csic_dataset.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-
-# Run the engine
-run: $(MAIN_BIN)
-	@echo "Launching DPI engine..."
-	mpirun -np $(NP) ./$(MAIN_BIN) \
-		--strategy $(STRATEGY) \
-		--omp-threads $(THREADS) \
-		--schedule $(SCHEDULE) \
-		--pattern-file $(PATTERNS) \
-		--dataset-file $(DATASET)
-
-
-run24: $(MAIN_BIN)
-	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 2 ./$(MAIN_BIN) --strategy hybrid --omp-threads 4 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
-
-run28: $(MAIN_BIN)
-	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 2 ./$(MAIN_BIN) --strategy hybrid --omp-threads 8 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
-
-run42: $(MAIN_BIN)
-	@echo "Launching DPI engine across hybrid MPI cluster layout..."
-	mpirun -np 3 ./$(MAIN_BIN) --strategy hybrid --omp-threads 2 --schedule dynamic,16 --pattern-file datasets/patterns.txt --dataset-file $(DATASET)
 
 # Test targets
 test: test_basic test_file test_config
@@ -139,5 +106,5 @@ csic_dataset: $(CSIC_BIN)
 	./$(CSIC_BIN) $(ARGS)
 
 clean:
-	rm -f $(MAIN_BIN) $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
+	rm -f $(TEST_BIN_1) $(TEST_BIN_2) $(TEST_CONFIG) $(BENCH_BIN) $(BENCH_BIN_T) $(BENCH_BIN_P) $(BENCH_BIN_PT) $(VALIDATE_BIN) $(CSIC_BIN)
 	rm -f src/*.o tests/*.o tests/benchmarks/*.o

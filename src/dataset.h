@@ -82,4 +82,11 @@ int save_packets_to_file(const char *filepath, const Packet *packets, int count)
 // Caller must free with free_packets().s
 Packet *load_packets_from_file(const char *filepath, int *out_count);
 
+// Loads patterns from a file (one pattern per line).
+// Returns a heap-allocated array of strings, or NULL on failure.
+char **load_patterns_from_file(const char *filepath, int *out_count);
+
+// Frees the array of patterns and the individual strings.
+void free_patterns_list(char **patterns, int count);
+
 #endif // DATASET_H

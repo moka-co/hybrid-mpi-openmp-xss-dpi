@@ -1,55 +1,57 @@
-// tests/generate_csic_dataset.c
-//
-// Real-data counterpart to tests/validate_dataset.c.
-//
-// validate_dataset.c cross-checks the Aho-Corasick automaton against a
-// *synthetically generated* dataset with known ground truth. This file
-// does the same cross-check, but loads real HTTP requests from the CSIC
-// 2010 dataset (already converted to a simple text format) instead of
-// generating random packets.
-//
-// INPUT FORMAT
-// ------------
-// Expects a .txt file with one request per line, produced by
-// csic2010_csv_to_txt.py using:
-//
-//     python csic2010_csv_to_txt.py csic2010.csv csic_get_post.txt \
-//         --format line --method-filter GET,POST --url-only
-//
-// Each line looks like:
-//
-//     <label>|<url_and_body>
-//
-// e.g.
-//     anomalous|http://localhost:8080/tienda1/publico/anadir.jsp?id=<script>alert(1)</script>
-//     normal|http://localhost:8080/tienda1/publico/index.jsp
-//
-// GROUND TRUTH CAVEAT
-// --------------------
-// The CSIC dataset's "anomalous" label covers ALL attack types the
-// dataset contains (SQLi, buffer overflow, path/parameter tampering,
-// etc.), not just XSS. Treating anomalous == has_xss will therefore
-// overcount false negatives: an anomalous SQLi row that (correctly)
-// contains no XSS pattern will look like a missed detection here.
-//
-// If you have refined your pattern list to be XSS-specific, use this
-// tool to get a rough signal, but do not trust false_negative counts
-// as precisely as you could with the synthetic dataset. For a tighter
-// check, pre-filter the input file to rows you've independently
-// confirmed contain an XSS payload (e.g. via a keyword grep) before
-// feeding it here, or extend the label column upstream with an
-// attack-type field if your CSV version has one.
-//
-// Compile:
-//   gcc -O3 -Wall -Isrc/ -lm -o tests/generate_csic_dataset \
-//       tests/generate_csic_dataset.c src/dataset.c src/pattern_matching.c
-//
-// Run:
-//   ./tests/generate_csic_dataset datasets-private/csic_get_post.txt \
-//       [pattern_file] [output_bin]
-//
-//   pattern_file defaults to datasets-private/string_xss_only.txt
-//   output_bin   defaults to datasets/packets_csic.bin
+/*
+ * tests/generate_csic_dataset.c
+ *
+ * Real-data counterpart to tests/validate_dataset.c.
+ *
+ * validate_dataset.c cross-checks the Aho-Corasick automaton against a
+ * *synthetically generated* dataset with known ground truth. This file
+ * does the same cross-check, but loads real HTTP requests from the CSIC
+ * 2010 dataset (already converted to a simple text format) instead of
+ * generating random packets.
+ *
+ * INPUT FORMAT
+ * ------------
+ * Expects a .txt file with one request per line, produced by
+ * csic2010_csv_to_txt.py using:
+ *
+ *     python csic2010_csv_to_txt.py csic2010.csv csic_get_post.txt \
+ *         --format line --method-filter GET,POST --url-only
+ *
+ * Each line looks like:
+ *
+ *     <label>|<url_and_body>
+ *
+ * e.g.
+ *     anomalous|http://localhost:8080/tienda1/publico/anadir.jsp?id=<script>alert(1)</script>
+ *     normal|http://localhost:8080/tienda1/publico/index.jsp
+ *
+ * GROUND TRUTH CAVEAT
+ * --------------------
+ * The CSIC dataset's "anomalous" label covers ALL attack types the
+ * dataset contains (SQLi, buffer overflow, path/parameter tampering,
+ * etc.), not just XSS. Treating anomalous == has_xss will therefore
+ * overcount false negatives: an anomalous SQLi row that (correctly)
+ * contains no XSS pattern will look like a missed detection here.
+ *
+ * If you have refined your pattern list to be XSS-specific, use this
+ * tool to get a rough signal, but do not trust false_negative counts
+ * as precisely as you could with the synthetic dataset. For a tighter
+ * check, pre-filter the input file to rows you've independently
+ * confirmed contain an XSS payload (e.g. via a keyword grep) before
+ * feeding it here, or extend the label column upstream with an
+ * attack-type field if your CSV version has one.
+ *
+ * Compile:
+ *   gcc -O3 -Wall -Isrc/ -lm -o tests/generate_csic_dataset \
+ *       tests/generate_csic_dataset.c src/dataset.c src/pattern_matching.c
+ *
+ * Run:
+ *   ./tests/generate_csic_dataset datasets-private/csic_get_post.txt \
+ *       [pattern_file] [output_bin]
+ *
+ *   pattern_file defaults to datasets-private/string_xss_only.txt
+ *   output_bin   defaults to datasets/packets_csic.bin
+ */
 
 #define _POSIX_C_SOURCE 200809L // for getline(), strdup(), ssize_t
 
@@ -67,56 +69,6 @@
 #define DEFAULT_OUTPUT_BIN   "datasets/packets_csic.bin"
 #define MIN_PATTERN_LEN      3 // patterns shorter than this match random text too easily
 
-// -----------------------------------------------------------------------
-// Pattern loading (same approach as tests/validate_dataset.c)
-// -----------------------------------------------------------------------
-
-static char **load_patterns_from_file(const char *filepath, int *out_count)
-{
-    FILE *fp = fopen(filepath, "r");
-    if (!fp) {
-        perror("Error opening pattern file");
-        return NULL;
-    }
-
-    int capacity = 256;
-    char **patterns = malloc(capacity * sizeof(char *));
-    if (!patterns) {
-        fclose(fp);
-        return NULL;
-    }
-
-    int count = 0;
-    char line[4096];
-
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\r\n")] = '\0';
-        if (strlen(line) == 0) continue;
-
-        if (count >= capacity) {
-            capacity *= 2;
-            char **grown = realloc(patterns, capacity * sizeof(char *));
-            if (!grown) {
-                fprintf(stderr, "ERROR: Failed to grow pattern array\n");
-                fclose(fp);
-                return NULL;
-            }
-            patterns = grown;
-        }
-
-        patterns[count] = strdup(line);
-        if (!patterns[count]) {
-            fprintf(stderr, "ERROR: Failed to allocate memory for pattern\n");
-            fclose(fp);
-            return NULL;
-        }
-        count++;
-    }
-
-    fclose(fp);
-    *out_count = count;
-    return patterns;
-}
 
 static int filter_short_patterns(char **patterns, int count, int min_len)
 {

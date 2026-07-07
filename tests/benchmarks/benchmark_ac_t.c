@@ -35,56 +35,6 @@ static double get_time_sec(void)
 }
 
 /**
- * Loads patterns from a file.
- */
-static char **load_patterns_from_file(const char *filepath, int *out_count)
-{
-    FILE *fp = fopen(filepath, "r");
-    if (!fp) {
-        perror("Error opening pattern file");
-        return NULL;
-    }
-
-    int capacity = 256;
-    char **patterns = malloc(capacity * sizeof(char *));
-    if (!patterns) {
-        fclose(fp);
-        return NULL;
-    }
-
-    int count = 0;
-    char line[4096];
-
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\r\n")] = '\0';
-        if (strlen(line) == 0) continue;
-
-        if (count >= capacity) {
-            capacity *= 2;
-            char **grown = realloc(patterns, capacity * sizeof(char *));
-            if (!grown) {
-                fprintf(stderr, "ERROR: Failed to grow pattern array\n");
-                fclose(fp);
-                return NULL;
-            }
-            patterns = grown;
-        }
-
-        patterns[count] = strdup(line);
-        if (!patterns[count]) {
-            fprintf(stderr, "ERROR: Failed to allocate memory for pattern\n");
-            fclose(fp);
-            return NULL;
-        }
-        count++;
-    }
-
-    fclose(fp);
-    *out_count = count;
-    return patterns;
-}
-
-/**
  * Main execution: Runs OpenMP-parallelized Aho-Corasick benchmark.
  */
 int main(int argc, char *argv[])
@@ -180,7 +130,7 @@ int main(int argc, char *argv[])
     // Generate JSON
     char json_buffer[4096];
     
-    int len = snprintf(json_buffer, sizeof(json_buffer),
+    snprintf(json_buffer, sizeof(json_buffer),
         "{\n"
         "  \"Configuration\": {\n"
         "    \"patterns_count\": %d,\n"
@@ -224,9 +174,7 @@ int main(int argc, char *argv[])
     // Cleanup
     free_packets(packets, cfg.packet_count);
 
-    for (int i = 0; i < num_patterns; i++)
-        free(patterns[i]);
-    free(patterns);
+    free_patterns_list(patterns, num_patterns);
 
     ac_free(ac);
 

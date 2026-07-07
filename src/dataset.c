@@ -262,3 +262,61 @@ Packet *load_packets_from_file(const char *filepath, int *out_count)
     *out_count = cnt;
     return packets;
 }
+
+// Loads patterns from a file (one pattern per line).
+char **load_patterns_from_file(const char *filepath, int *out_count)
+{
+    FILE *fp = fopen(filepath, "r");
+    if (!fp) {
+        perror("Error opening pattern file");
+        return NULL;
+    }
+
+    int capacity = 256;
+    char **patterns = malloc(capacity * sizeof(char *));
+    if (!patterns) {
+        fclose(fp);
+        return NULL;
+    }
+
+    int count = 0;
+    char line[4096];
+
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (strlen(line) == 0) continue;
+
+        if (count >= capacity) {
+            capacity *= 2;
+            char **grown = realloc(patterns, capacity * sizeof(char *));
+            if (!grown) {
+                fprintf(stderr, "ERROR: Failed to grow pattern array\n");
+                fclose(fp);
+                return NULL;
+            }
+            patterns = grown;
+        }
+
+        patterns[count] = strdup(line);
+        if (!patterns[count]) {
+            fprintf(stderr, "ERROR: Failed to allocate memory for pattern\n");
+            fclose(fp);
+            return NULL;
+        }
+        count++;
+    }
+
+    fclose(fp);
+    *out_count = count;
+    return patterns;
+}
+
+// Frees the array of patterns and the individual strings.
+void free_patterns_list(char **patterns, int count)
+{
+    if (!patterns) return;
+    for (int i = 0; i < count; i++) {
+        free(patterns[i]);
+    }
+    free(patterns);
+}

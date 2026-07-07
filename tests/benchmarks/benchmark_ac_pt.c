@@ -18,35 +18,6 @@
 
 #define MASTER_RANK 0
 
-/**
- * Loads patterns from a file.
- */
-static char **load_patterns_from_file(const char *filepath, int *out_count)
-{
-    FILE *fp = fopen(filepath, "r");
-    if (!fp) {
-        perror("Error opening pattern file");
-        return NULL;
-    }
-
-    int capacity = 256;
-    char **patterns = malloc(capacity * sizeof(char *));
-    int count = 0;
-    char line[4096];
-
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\r\n")] = '\0';
-        if (strlen(line) == 0) continue;
-        if (count >= capacity) {
-            capacity *= 2;
-            patterns = realloc(patterns, capacity * sizeof(char *));
-        }
-        patterns[count++] = strdup(line);
-    }
-    fclose(fp);
-    *out_count = count;
-    return patterns;
-}
 
 /**
  * Main execution: Runs MPI+OpenMP parallelized Aho-Corasick benchmark.
@@ -79,6 +50,7 @@ int main(int argc, char *argv[])
         ac = ac_build((const char **)patterns, num_patterns);
         num_states = ac->num_states;
         capacity = ac->capacity;
+        free_patterns_list(patterns, num_patterns);
     }
 
     MPI_Bcast(&num_patterns, 1, MPI_INT, MASTER_RANK, MPI_COMM_WORLD);
@@ -195,7 +167,7 @@ int main(int argc, char *argv[])
 
         // Generate JSON
         char json_buffer[4096];
-        int len = snprintf(json_buffer, sizeof(json_buffer),
+        snprintf(json_buffer, sizeof(json_buffer),
             "{\n"
             "  \"Configuration\": {\n"
             "    \"patterns_count\": %d,\n"
@@ -209,7 +181,7 @@ int main(int argc, char *argv[])
             "  },\n"
             "  \"Results\": {\n"
             "    \"scan_time_sec\": %.6f,\n"
-            "    \"total_matches\": %llu,\n"
+            "    \"total_matches\": %lu,\n"
             "    \"throughput_mb_s\": %.2f,\n"
             "    \"packets_per_sec\": %.0f,\n"
             "    \"avg_time_per_packet_us\": %.3f,\n"
@@ -223,11 +195,12 @@ int main(int argc, char *argv[])
             "  }\n"
             "}",
             num_patterns, num_states, total_packets, total_bytes / 1e6, 1024.0, cfg.num_mpi_ranks, cfg.num_omp_threads, cfg.strategy_type,
-            scan_time, global_total_matches, throughput_mb_per_sec, packets_per_sec, avg_time_per_packet_us, avg_time_per_byte_ns,
+            scan_time, (unsigned long)global_total_matches, throughput_mb_per_sec, packets_per_sec, avg_time_per_packet_us, avg_time_per_byte_ns,
             num_states, total_bytes / num_states, sizeof(ACState), AC_ALPHABET_SIZE * sizeof(int));
 
         // Print to stdout
         printf("%s\n", json_buffer);
+
         // Generate a 6-character random alphanumeric string
         char rand_str[7];
         const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -238,7 +211,7 @@ int main(int argc, char *argv[])
 
         // Save to file
         char filename[128];
-        snprintf(filename, sizeof(filename), "results/benchmark_ac_p%d_t%d_%s.json", size, num_threads, scheduler_safe);
+        snprintf(filename, sizeof(filename), "results/benchmark_ac_p%d_t%d_%s_%s.json", size, num_threads, scheduler_safe, rand_str);
         FILE *f = fopen(filename, "w");
         if (f) {
             fprintf(f, "%s\n", json_buffer);
