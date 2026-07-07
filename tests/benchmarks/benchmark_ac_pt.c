@@ -59,7 +59,6 @@ int main(int argc, char *argv[])
         ac = ac_build((const char **)patterns, num_patterns);
         num_states = ac->num_states;
         capacity = ac->capacity;
-        free_patterns_list(patterns, num_patterns);
     }
 
     MPI_Bcast(&num_patterns, 1, MPI_INT, MASTER_RANK, MPI_COMM_WORLD);
@@ -106,6 +105,8 @@ int main(int argc, char *argv[])
         printf("Rank %d: Generating %d packets...\n", MASTER_RANK, total_packets);
         LengthDistParams lp = { 7.0, 1.0, 64, 8192 };
         all_packets = generate_packets(total_packets, 42, lp, 0.5, (const char **)patterns, num_patterns);
+
+        printf("Test debug after generate_packets");
 
         for (int i = 0; i < size; i++) {
             if (i == MASTER_RANK) {
@@ -230,6 +231,7 @@ int main(int argc, char *argv[])
     }
 
     if (rank != MASTER_RANK) {
+        free_patterns_list(patterns, num_patterns);
         for (int j = 0; j < packets_per_proc; j++) free(my_packets[j].data);
         free(ac->states);
         free(ac->output_next);

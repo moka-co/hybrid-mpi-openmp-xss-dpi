@@ -48,7 +48,6 @@ int main(int argc, char *argv[])
         ac = ac_build((const char **)patterns, num_patterns);
         num_states = ac->num_states;
         capacity = ac->capacity;
-        free_patterns_list(patterns, num_patterns);
     }
 
     MPI_Bcast(&num_patterns, 1, MPI_INT, MASTER_RANK, MPI_COMM_WORLD);
@@ -207,6 +206,7 @@ int main(int argc, char *argv[])
         free(ac->output_next);
     } else {
         free_packets(all_packets, total_packets);
+        free_patterns_list(patterns, num_patterns);
     }
     free(my_packets);
     ac_free(ac);
