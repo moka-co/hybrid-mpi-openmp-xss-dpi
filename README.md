@@ -81,9 +81,24 @@ sbatch scripts/submit_jobs.sh
 ```
 
 ## Generating Plots
-After running experiments and collecting results in the `results/` directory, generate performance plots using:
+After running experiments and collecting results in the `results/` directory, you can generate various plots using the scripts in the `analysis/` directory (requires `matplotlib` and `pandas`):
+
+### General Performance Plots
 ```bash
 cd analysis
 python3 plot.py
 ```
-The output plots will be saved under `analysis/plots/`.
+
+### Thread Imbalance Analysis
+To visualize the workload distribution between threads using static vs. dynamic scheduling:
+```bash
+python3 analysis/plot_thread_imbalance_comparison.py
+```
+
+### Benchmark Comparison
+To visualize throughput based on packet counts:
+```bash
+python3 analysis/plot_benchmark_comparison.py
+```
+
+All output plots will be saved under the `plots/` directory.
