@@ -20,8 +20,7 @@ void init_default_config(Config *cfg) {
     // Clear the memory for the configuration structure
     memset(cfg, 0, sizeof(Config));
     
-    // Set default dataset parameters (1GB, 1M packets)
-    cfg->dataset_size = 1024 * 1024 * 1024; // 1GB default
+    // Set default dataset parameters (1M packets)
     cfg->packet_count = 1000000;            // 1M packets default
     
     // Set default file paths
@@ -38,16 +37,13 @@ void init_default_config(Config *cfg) {
     // Set output configuration and other settings
     strncpy(cfg->output_file, "results.csv", sizeof(cfg->output_file) - 1);
     strncpy(cfg->output_format, "csv", sizeof(cfg->output_format) - 1);
-    cfg->num_repetitions = 1;
     cfg->random_seed = 42;                 // seed=42 default
-    cfg->verbose = 0;
 }
 
 // Displays the usage instructions for the application to stderr.
 void print_usage(const char *prog_name) {
     fprintf(stderr, "Usage: %s [options]\n", prog_name);
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  --dataset-mb <num>   Dataset size in MB (default: 100)\n");
     fprintf(stderr, "  --num-packets <num>  Total number of packets (default: 1000000)\n");
     fprintf(stderr, "  --pattern-file <str> Path to signature pattern file (default: patterns.txt)\n");
     fprintf(stderr, "  --mpi-ranks <num>    Target MPI ranks (default: 1)\n");
@@ -57,8 +53,6 @@ void print_usage(const char *prog_name) {
     fprintf(stderr, "  --seed <num>         Random seed generation index (default: 42)\n");
     fprintf(stderr, "  --output <str>       Output filepath metrics destination (default: results.csv)\n");
     fprintf(stderr, "  --format <str>       Output syntax format: csv, json (default: csv)\n");
-    fprintf(stderr, "  --reps <num>         Number of execution iterations (default: 1)\n");
-    fprintf(stderr, "  --verbose            Enable verbose debug logs\n");
 }
 
 // Parses command-line arguments and updates the configuration structure.
@@ -68,7 +62,6 @@ void parse_arguments(int argc, char *argv[], Config *cfg) {
 
     // Define supported long options
     static struct option long_options[] = {
-        {"dataset-mb",   required_argument, 0, 'd'},
         {"num-packets",  required_argument, 0, 'p'},
         {"pattern-file", required_argument, 0, 'f'},
         {"mpi-ranks",    required_argument, 0, 'm'},
@@ -78,18 +71,13 @@ void parse_arguments(int argc, char *argv[], Config *cfg) {
         {"seed",         required_argument, 0, 'r'},
         {"output",       required_argument, 0, 'o'},
         {"format",       required_argument, 0, 'x'},
-        {"reps",         required_argument, 0, 'n'},
-        {"verbose",      no_argument,       0, 'v'},
         {"help",         no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     // Process options
-    while ((opt = getopt_long(argc, argv, "d:p:f:m:t:s:r:o:x:n:vh", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:f:m:t:s:r:o:x:h", long_options, &option_index)) != -1) {
         switch (opt) {
-            case 'd':
-                cfg->dataset_size = (uint64_t)strtoull(optarg, NULL, 10) * 1024 * 1024;
-                break;
             case 'p':
                 cfg->packet_count = (uint32_t)strtoul(optarg, NULL, 10);
                 break;
@@ -123,12 +111,6 @@ void parse_arguments(int argc, char *argv[], Config *cfg) {
             case 'x':
                 strncpy(cfg->output_format, optarg, sizeof(cfg->output_format) - 1);
                 break;
-            case 'n':
-                cfg->num_repetitions = (uint32_t)strtoul(optarg, NULL, 10);
-                break;
-            case 'v':
-                cfg->verbose = 1;
-                break;
             case 'h':
             default:
                 print_usage(argv[0]);
@@ -154,26 +136,16 @@ int validate_config(const Config *cfg) {
         return 0;
     }
 
-    // 4. Pattern file existence check
+    // 3. Pattern file existence check
     if (access(cfg->pattern_file, F_OK) != 0) {
         fprintf(stderr, "Configuration Error: Pattern file '%s' does not exist.\n", cfg->pattern_file);
         return 0;
     }
 
-    // 5. Output format validation
+    // 4. Output format validation
     if (strcmp(cfg->output_format, "csv") != 0 && strcmp(cfg->output_format, "json") != 0) {
         fprintf(stderr, "Configuration Error: Output format must be either 'csv' or 'json'.\n");
         return 0;
-    }
-
-    // 6. RAM threshold warning
-    struct sysinfo info;
-    if (sysinfo(&info) == 0) {
-        uint64_t total_ram = (uint64_t)info.totalram * info.mem_unit;
-        if (cfg->dataset_size > total_ram) {
-            fprintf(stderr, "Configuration Warning: Target dataset size (%lu MB) exceeds total system memory (%lu MB).\n",
-                    cfg->dataset_size / (1024 * 1024), total_ram / (1024 * 1024));
-        }
     }
 
     return 1;
@@ -182,7 +154,6 @@ int validate_config(const Config *cfg) {
 // Prints the current configuration to stdout.
 void print_config(const Config *cfg) {
     printf("=== Configuration Parameters ===\n");
-    printf("  Dataset Size:       %lu Bytes (%lu MB)\n", cfg->dataset_size, cfg->dataset_size / (1024 * 1024));
     printf("  Packet Count:       %u\n", cfg->packet_count);
     printf("  Pattern File:       %s\n", cfg->pattern_file);
     printf("  MPI Ranks:          %u\n", cfg->num_mpi_ranks);
@@ -191,9 +162,7 @@ void print_config(const Config *cfg) {
     printf("  OMP Schedule:       %s (Chunk: %u)\n", cfg->schedule_type, cfg->schedule_chunk);
     printf("  Output File:        %s\n", cfg->output_file);
     printf("  Output Format:      %s\n", cfg->output_format);
-    printf("  Repetitions:        %u\n", cfg->num_repetitions);
     printf("  Random Seed:        %u\n", cfg->random_seed);
-    printf("  Verbose Logging:    %s\n", cfg->verbose ? "ENABLED" : "DISABLED");
     printf("=================================\n");
 }
 

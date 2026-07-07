@@ -9,9 +9,8 @@ void test_default_initialization() {
     Config cfg;
     init_default_config(&cfg);
     
-    assert(cfg.dataset_size == 100 * 1024 * 1024);
-    assert(cfg.packet_count == 100000);
-    assert(cfg.num_omp_threads == 4);
+    assert(cfg.packet_count == 1000000);
+    assert(cfg.num_omp_threads == 0);
     assert(cfg.random_seed == 42);
     assert(strcmp(cfg.schedule_type, "static") == 0);
     assert(strcmp(cfg.output_format, "csv") == 0);

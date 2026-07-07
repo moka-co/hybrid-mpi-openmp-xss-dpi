@@ -5,7 +5,6 @@
 
 // Configuration parameters for the DPI engine
 typedef struct {
-    uint64_t dataset_size;        // Total dataset size in bytes
     uint32_t packet_count;        // Number of packets in dataset
     char pattern_file[256];       // Path to signature pattern file
     uint32_t num_patterns;        // Number of patterns loaded
@@ -16,9 +15,7 @@ typedef struct {
     uint32_t schedule_chunk;      // OpenMP schedule chunk size
     char output_file[256];        // Path to output results file
     char output_format[16];       // Output format: "csv" or "json"
-    uint32_t num_repetitions;     // Number of execution iterations
     uint32_t random_seed;         // Random seed for reproducibility
-    int verbose;                  // Enable/disable verbose logging
 } Config;
 
 // Metadata structure for capturing build and runtime environment
